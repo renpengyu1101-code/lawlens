@@ -31,6 +31,7 @@ def main() -> int:
     ap.add_argument("--base", default="http://127.0.0.1:8200")
     ap.add_argument("--filter", default="", help="只上传文件名包含该子串的材料")
     ap.add_argument("--dir", default="", help="材料目录（默认 samples/虚构材料-澜川精密-2026-10）")
+    ap.add_argument("--subject", default="", help="拟上市主体全称（默认留空，由调用方指定）")
     ap.add_argument("--ext", default="docx,pdf", help="只上传这些扩展名")
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args()
@@ -52,7 +53,7 @@ def main() -> int:
 
         r = c.post("/api/projects", json={
             "title": f"真模型核查（{args.filter or '全部'}）",
-            "subject_name": "澜川精密科技有限公司",
+            "subject_name": args.subject,
             "brief": "核查资产权属、劳动用工与股权退出安排",
             "board": "all",
             "is_demo": True,
