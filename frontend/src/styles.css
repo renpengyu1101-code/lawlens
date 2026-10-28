@@ -609,3 +609,68 @@ label.checkbox input { width: auto; margin: 0; }
   .footer-cols { grid-template-columns: repeat(2, 1fr); }
   .footer-bottom { flex-direction: column; }
 }
+
+/* ---------------- 思维导图式核查进度 ---------------- */
+.mindmap-wrap {
+  position: relative; margin: 6px 0 14px; padding: 6px 4px 2px;
+  border: 1px solid var(--line); border-radius: 14px;
+  background: linear-gradient(180deg, #fbfcfe, #f6f8fb);
+  overflow: hidden;
+}
+.mindmap { display: block; width: 100%; height: auto; }
+
+.mm-root-core { fill: #1f3557; }
+.mm-root-halo { fill: none; stroke: #1f3557; stroke-opacity: .22; stroke-width: 1.2;
+  transform-box: fill-box; transform-origin: center; animation: mm-halo 2.6s ease-out infinite; }
+.mm-root-label { fill: #fff; font-size: 12px; font-weight: 700; text-anchor: middle; letter-spacing: .06em; }
+
+.mm-branch { animation: mm-fade .45s ease-out both; }
+.mm-link { fill: none; stroke: #c9d2dd; stroke-width: 1.3; stroke-linecap: round;
+  stroke-dasharray: 1; stroke-dashoffset: 1; animation: mm-draw .55s ease-out forwards; }
+.mm-link-leaf { stroke: #d5dce5; animation-delay: inherit; }
+
+.mm-group-rect { fill: #eef2f8; stroke: #d7dfe9; stroke-width: 1; }
+.mm-group-label { fill: #33404f; font-size: 11.5px; font-weight: 600; text-anchor: middle; letter-spacing: .04em; }
+
+.mm-leaf { animation: mm-pop .38s cubic-bezier(.2,.9,.25,1.1) both; transform-box: fill-box; transform-origin: center; }
+.mm-node { fill: #fff; stroke: #b9c4d1; stroke-width: 1.6; transition: fill .3s ease, stroke .3s ease; }
+.mm-leaf-label { fill: #5d6875; font-size: 11px; }
+
+.mm-ok .mm-node { fill: #2f9e6f; stroke: #2f9e6f; }
+.mm-ok .mm-leaf-label { fill: #3d4a58; }
+.mm-run .mm-node { fill: #2f6fd0; stroke: #2f6fd0; }
+.mm-run .mm-leaf-label { fill: #1f3557; font-weight: 600; }
+.mm-warn .mm-node { fill: #c98a2b; stroke: #c98a2b; }
+.mm-warn .mm-leaf-label { fill: #6b5327; }
+.mm-fail .mm-node { fill: #c0453f; stroke: #c0453f; }
+.mm-skip .mm-node { fill: #fff; stroke: #b9c4d1; stroke-dasharray: 2 2; }
+.mm-skip .mm-leaf-label { fill: #97a1ad; }
+
+.mm-node-pulse { fill: none; stroke: #2f6fd0; stroke-width: 1.4;
+  transform-box: fill-box; transform-origin: center; animation: mm-pulse 1.5s ease-out infinite; }
+
+.mm-now {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px 8px;
+  font-size: 12.5px; color: #4a5766;
+}
+.mm-now-dot { width: 7px; height: 7px; border-radius: 50%; background: #2f6fd0; animation: mm-blink 1.1s ease-in-out infinite; }
+
+@keyframes mm-draw { to { stroke-dashoffset: 0; } }
+@keyframes mm-pop { from { opacity: 0; transform: scale(.72); } to { opacity: 1; transform: scale(1); } }
+@keyframes mm-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mm-halo {
+  0% { transform: scale(.9); stroke-opacity: .3; }
+  70% { transform: scale(1.25); stroke-opacity: 0; }
+  100% { transform: scale(1.25); stroke-opacity: 0; }
+}
+@keyframes mm-pulse {
+  0% { transform: scale(1); stroke-opacity: .45; }
+  80% { transform: scale(2.4); stroke-opacity: 0; }
+  100% { transform: scale(2.4); stroke-opacity: 0; }
+}
+@keyframes mm-blink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mm-halo, .mm-node-pulse, .mm-now-dot, .mm-branch, .mm-leaf, .mm-link { animation: none !important; }
+  .mm-link { stroke-dashoffset: 0; }
+}

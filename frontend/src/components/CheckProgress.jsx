@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import MindMap from './MindMap'
 
 const TERMINAL = new Set(['done', 'pending_review', 'failed', 'awaiting_materials'])
-const BOARDS = ['资产权属与经营基础', '劳动用工合规', '投资退出与股权回购']
 
 const STEP_TONE = {
   running: 'run',
@@ -67,16 +67,6 @@ export default function CheckProgress({ projectId, onOpen, onReset, onSettled })
   const steps = data?.steps || []
   const running = data?.current || null
   const finished = data ? TERMINAL.has(data.status) : false
-  const boards = data?.boards?.length ? data.boards : BOARDS
-
-  const stateOf = (name) => {
-    if (running && running.board === name) return 'active'
-    const own = steps.filter((s) => s.board === name)
-    if (!own.length) return 'wait'
-    if (own.some((s) => s.status === 'skip')) return 'skip'
-    if (own.some((s) => s.status === 'running')) return 'active'
-    return 'done'
-  }
 
   const verdict = finished
     ? data.status === 'failed' ? '执行失败'
@@ -96,22 +86,8 @@ export default function CheckProgress({ projectId, onOpen, onReset, onSettled })
         <span className="runpanel-meta">{data ? `已完成 ${data.done} 步` : '—'} · {elapsed}s</span>
       </div>
 
-      <div className="board-chips">
-        {boards.map((name) => (
-          <span key={name} className={`board-chip ${stateOf(name)}`}>
-            <i className="board-dot" />
-            {name}
-          </span>
-        ))}
-      </div>
+      {steps.length > 0 && <MindMap steps={steps} running={running} />}
 
-      {running && (
-        <div className="run-now">
-          <span className="run-now-dot" />
-          <b>{running.agent}</b>
-          <span>{running.text}</span>
-        </div>
-      )}
 
       <ol className="runsteps" ref={listRef}>
         {steps.map((s) => (
