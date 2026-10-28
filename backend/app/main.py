@@ -11,21 +11,23 @@ import sys
 import time
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import agents, external, llm, review, rule_refs, scoring, subject, versions
+from . import agents, external, llm, review, rule_refs, scoring, storage, subject, versions
 from .config import (
-    BOARD_SEQUENCE, BOARDS, COOKIE_NAME, CREDITS_PER_RUN, MAX_QC_ROUNDS, MAX_UPLOAD_MB,
+    BOARD_SEQUENCE, BOARDS, COOKIE_NAME, CREDITS_PER_RUN, MAX_FILES_PER_PROJECT, MAX_PROJECT_MB,
+    MAX_QC_ROUNDS, MAX_UPLOAD_MB,
     MOCK_MODE, MOCK_STEP_DELAY, REGISTER_BONUS, REPORT_DIR, ROOT_DIR, SECRET_KEY,
     SESSION_MAX_AGE, UPLOAD_DIR,
 )
 from .db import audit, connect, init_db, now
 from .config import ALLOW_REGISTER, COOKIE_SECURE
 from .parsers import parse_file
-from .report import build_report
+from .pdf_report import build_pdf
+from .report import build_markdown, build_report
 from .security import get_current_user, get_optional_user, hash_password, issue_token, require_admin, verify_password
 
 
@@ -51,6 +53,24 @@ app.add_middleware(
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SAFE_NAME = re.compile(r"[^0-9A-Za-z\u4e00-\u9fa5._\-（）()]+")
+
+# 登录失败限流（进程内）：同一 来源IP+账号 5 分钟内失败 5 次即锁
+_LOGIN_FAILS: dict[str, list[float]] = {}
+_LOGIN_WINDOW = 300
+_LOGIN_MAX = 5
+
+
+def _login_key(request: Request, email: str) -> str:
+    host = request.client.host if request.client else "?"
+    return f"{host}:{(email or '').strip().lower()}"
+
+
+def _login_blocked(key: str) -> None:
+    now_ts = time.time()
+    hits = [t for t in _LOGIN_FAILS.get(key, []) if now_ts - t < _LOGIN_WINDOW]
+    _LOGIN_FAILS[key] = hits
+    if len(hits) >= _LOGIN_MAX:
+        raise HTTPException(429, "登录失败次数过多，请 5 分钟后再试")
 
 
 # ----------------------------------------------------------------- 启动
@@ -96,24 +116,19 @@ def _loud(message: str) -> None:
 
 
 def _seed_admin() -> None:
-    """首次启动建管理员：没给密码就随机生成并打印一次，杜绝 admin/123456。"""
+    """首次启动建管理员：默认 admin / 325114，可用环境变量覆盖；首次登录后请改密码。"""
     with connect() as conn:
         row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
         if row["c"]:
             return
         email = os.getenv("DILIGENCE_ADMIN_EMAIL", "admin")
-        pwd = (os.getenv("DILIGENCE_ADMIN_PASSWORD") or "").strip()
-        generated = not pwd
-        if generated:
-            pwd = secrets.token_urlsafe(9)
+        pwd = (os.getenv("DILIGENCE_ADMIN_PASSWORD") or "").strip() or "325114"
         conn.execute(
             "INSERT INTO users(email, pwd_hash, role, credits, created_at) VALUES (?,?,?,?,?)",
             (email, hash_password(pwd), "admin", 99999, now()),
         )
         audit(conn, None, "seed_admin", email, "初始化管理员账号")
-    if generated:
-        _loud(f"已创建管理员 {email}，初始密码：{pwd}")
-        _loud("这串密码只显示这一次，请登录后立即修改。")
+    _loud(f"已创建管理员 {email}，初始密码：{pwd}（请登录后立即修改）")
 
 
 def _warn_insecure_defaults() -> None:
@@ -196,6 +211,17 @@ class CreditsIn(BaseModel):
     reason: str = "管理员调整"
 
 
+class AdminUserIn(BaseModel):
+    email: str
+    password: str = Field(min_length=6, max_length=128)
+    role: str = "user"
+    credits: int = 0
+
+
+class UserStatusIn(BaseModel):
+    active: bool
+
+
 class RuleUpdateIn(BaseModel):
     rule_ref: dict | None = None
     verification_status: str | None = None
@@ -222,6 +248,20 @@ def _own_project(conn, project_id: int, user: dict) -> dict:
 
 def _recalc_status(conn, project_id: int) -> None:
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (now(), project_id))
+
+
+def _quota_error(used: int, count: int, limit_mb: int) -> str:
+    return (f"项目存储超限：已用 {used / 1024 / 1024:.1f}MB / {limit_mb}MB、"
+            f"{count} 个文件（上限 {MAX_FILES_PER_PROJECT} 个）。请删除旧材料或调大 DILIGENCE_MAX_PROJECT_MB。")
+
+
+def _check_quota(project_id: int, extra_bytes: int, extra_files: int) -> tuple[int, int]:
+    """返回 (用量, 文件数)；超限时抛 413。"""
+    used, count = storage.project_usage(project_id)
+    limit = MAX_PROJECT_MB * 1024 * 1024
+    if count + extra_files > MAX_FILES_PER_PROJECT or used + extra_bytes > limit:
+        raise HTTPException(413, _quota_error(used + extra_bytes, count + extra_files, MAX_PROJECT_MB))
+    return used, count
 
 
 # ----------------------------------------------------------------- 健康
@@ -252,19 +292,25 @@ def register(payload: RegisterIn, response: Response) -> dict:
         )
         audit(conn, uid, "register", payload.email)
         row = dict(conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone())
-    response.set_cookie(COOKIE_NAME, issue_token(uid), max_age=SESSION_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
+    response.set_cookie(COOKIE_NAME, issue_token(uid, row["pwd_hash"]), max_age=SESSION_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
     return {"user": _user_out(row)}
 
 
 @app.post("/api/auth/login")
-def login(payload: LoginIn, response: Response) -> dict:
+def login(payload: LoginIn, response: Response, request: Request) -> dict:
+    key = _login_key(request, payload.email)
+    _login_blocked(key)
     with connect() as conn:
         row = conn.execute("SELECT * FROM users WHERE email = ?", (payload.email,)).fetchone()
         if row is None or not verify_password(payload.password, row["pwd_hash"]):
+            _LOGIN_FAILS.setdefault(key, []).append(time.time())
             raise HTTPException(401, "邮箱或密码错误")
+        if "is_active" in row.keys() and row["is_active"] == 0:
+            raise HTTPException(403, "账号已停用，请联系管理员")
+        _LOGIN_FAILS.pop(key, None)
         audit(conn, row["id"], "login", payload.email)
         data = dict(row)
-    response.set_cookie(COOKIE_NAME, issue_token(data["id"]), max_age=SESSION_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
+    response.set_cookie(COOKIE_NAME, issue_token(data["id"], data["pwd_hash"]), max_age=SESSION_MAX_AGE, httponly=True, samesite="lax", secure=COOKIE_SECURE)
     return {"user": _user_out(data)}
 
 
@@ -280,14 +326,17 @@ def me(user: dict = Depends(get_current_user)) -> dict:
 
 
 @app.post("/api/auth/password")
-def change_password(payload: PasswordIn, user: dict = Depends(get_current_user)) -> dict:
+def change_password(payload: PasswordIn, response: Response, user: dict = Depends(get_current_user)) -> dict:
     with connect() as conn:
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
         if row is None or not verify_password(payload.old_password, row["pwd_hash"]):
             raise HTTPException(400, "原密码不正确")
-        conn.execute("UPDATE users SET pwd_hash = ? WHERE id = ?",
-                     (hash_password(payload.new_password), user["id"]))
+        new_hash = hash_password(payload.new_password)
+        conn.execute("UPDATE users SET pwd_hash = ? WHERE id = ?", (new_hash, user["id"]))
         audit(conn, user["id"], "change_password", f"user:{user['id']}")
+    # 改密后旧 cookie 一律失效（token 里带口令版本）；当前会话换发新 cookie，避免被自己踢下线
+    response.set_cookie(COOKIE_NAME, issue_token(user["id"], new_hash), max_age=SESSION_MAX_AGE,
+                        httponly=True, samesite="lax", secure=COOKIE_SECURE)
     return {"ok": True}
 
 
@@ -368,6 +417,10 @@ def project_score(project_id: int, user: dict = Depends(get_current_user)) -> di
     missing = json.loads(project["missing"]) if project.get("missing") else []
     external_findings = json.loads(ext_row["findings"]) if ext_row else []
     qc = json.loads(qc_row["detail"]) if qc_row else None
+    spec = json.loads(project["task_spec"]) if project.get("task_spec") else {}
+    checked_boards = spec.get("checked_boards")
+    if checked_boards is None and project["board"] != "all":
+        checked_boards = [project["board"]]
 
     return scoring.score_project(
         scoring.load_rubric(),
@@ -382,6 +435,7 @@ def project_score(project_id: int, user: dict = Depends(get_current_user)) -> di
         versions={"groups": groups, "versions": versions,
                   "conflict": any(f["code"] in {"AST-06"} for f in findings)},
         qc=qc,
+        checked_boards=checked_boards,
     )
 
 
@@ -433,6 +487,22 @@ def review_decision(review_id: int, payload: ReviewDecisionIn, admin: dict = Dep
             raise HTTPException(404, "复核单不存在")
         if row["status"] != "pending":
             raise HTTPException(409, "该复核单已处理")
+        # 复核闸门：质检仍有阻断项时不允许直接通过，必须先退回整改或补证
+        if payload.decision == "approved":
+            qc_row = conn.execute(
+                "SELECT detail FROM qc_runs WHERE project_id = ? ORDER BY id DESC LIMIT 1",
+                (row["project_id"],)).fetchone()
+            if qc_row:
+                try:
+                    qc_detail = json.loads(qc_row["detail"])
+                except (ValueError, TypeError):
+                    qc_detail = {}
+                failed = int(qc_detail.get("failed") or 0)
+                if failed > 0:
+                    raise HTTPException(
+                        409,
+                        f"质检仍有 {failed} 条阻断项，不能直接通过；请先退回整改或补齐证据后重跑",
+                    )
         status = "approved" if payload.decision == "approved" else "rejected"
         conn.execute(
             "UPDATE review_requests SET status = ?, reviewer_id = ?, comment = ?, decided_at = ? WHERE id = ?",
@@ -510,6 +580,9 @@ def get_project(project_id: int, user: dict = Depends(get_current_user)) -> dict
         review_row = conn.execute(
             "SELECT r.*, u.email AS reviewer FROM review_requests r LEFT JOIN users u ON u.id = r.reviewer_id"
             " WHERE r.project_id = ? ORDER BY r.id DESC LIMIT 1", (project_id,)).fetchone()
+        extraction_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM extractions WHERE project_id = ?", (project_id,)).fetchone()["c"]
+    used_bytes, used_files = storage.project_usage(project_id)
     external_data = None
     if ext_row:
         external_data = dict(ext_row)
@@ -536,7 +609,28 @@ def get_project(project_id: int, user: dict = Depends(get_current_user)) -> dict
         "review": review_data,
         "external": external_data,
         "report": {"available": bool(report_row), "version": report_row["version"] if report_row else None},
+        "extractions": {"total": extraction_count},
+        "storage": {
+            "upload_bytes": used_bytes,
+            "upload_files": used_files,
+            "limit_mb": MAX_PROJECT_MB,
+            "max_files": MAX_FILES_PER_PROJECT,
+        },
     }
+
+
+@app.get("/api/projects/{project_id}/extractions")
+def list_extractions(project_id: int, limit: int = 200, user: dict = Depends(get_current_user)) -> dict:
+    """本轮抽取到的字段（证据之外的原始事实层），供追溯「模型当时抽到了什么」。"""
+    limit = max(1, min(limit, 500))
+    with connect() as conn:
+        _own_project(conn, project_id, user)
+        total = conn.execute("SELECT COUNT(*) AS c FROM extractions WHERE project_id = ?",
+                             (project_id,)).fetchone()["c"]
+        rows = [dict(r) for r in conn.execute(
+            "SELECT board, filename, page, field, value, quote, source FROM extractions"
+            " WHERE project_id = ? ORDER BY id LIMIT ?", (project_id, limit)).fetchall()]
+    return {"total": total, "items": rows}
 
 
 @app.post("/api/projects/{project_id}/documents")
@@ -550,9 +644,13 @@ def upload_documents(project_id: int, files: list[UploadFile] = File(...), user:
     target.mkdir(parents=True, exist_ok=True)
     saved = []
     for upload in files:
+        size = getattr(upload, "size", None)
+        if size is not None and size > MAX_UPLOAD_MB * 1024 * 1024:
+            raise HTTPException(413, f"单文件不得超过 {MAX_UPLOAD_MB}MB：{upload.filename}")
         raw = upload.file.read()
         if len(raw) > MAX_UPLOAD_MB * 1024 * 1024:
             raise HTTPException(413, f"单文件不得超过 {MAX_UPLOAD_MB}MB：{upload.filename}")
+        _check_quota(project_id, len(raw), 1)
         safe = SAFE_NAME.sub("_", Path(upload.filename or "file").name)
         dest = target / safe
         counter = 1
@@ -617,7 +715,13 @@ def upload_version(
 ) -> dict:
     """上传新版本：段落对齐到上一版，保持 uid 稳定，并把当前版指针移过来。"""
     with connect() as conn:
-        _own_project(conn, project_id, user)
+        project = _own_project(conn, project_id, user)
+    if project["status"] == "running":
+        raise HTTPException(409, "任务执行中，暂不能上传新版本")
+
+    size = getattr(file, "size", None)
+    if size is not None and size > MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, f"单文件不得超过 {MAX_UPLOAD_MB}MB：{file.filename}")
 
     target = UPLOAD_DIR / f"project-{project_id}" / "versions"
     target.mkdir(parents=True, exist_ok=True)
@@ -628,6 +732,9 @@ def upload_version(
         dest = target / f"{Path(safe).stem}-{counter}{Path(safe).suffix}"
         counter += 1
     raw = file.file.read()
+    if len(raw) > MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, f"单文件不得超过 {MAX_UPLOAD_MB}MB：{file.filename}")
+    _check_quota(project_id, len(raw), 1)
     dest.write_bytes(raw)
     digest = hashlib.sha256(raw).hexdigest()
     text, pages, status = parse_file(dest)
@@ -727,6 +834,18 @@ def diff_versions(version_id: int, other_id: int, user: dict = Depends(get_curre
 
 @app.post("/api/projects/{project_id}/run")
 def run_project(project_id: int, background: BackgroundTasks, request: Request, user: dict = Depends(get_current_user)) -> dict:
+    # 先校验模型配置：配置不合法时不应占用任务、也不应扣积分
+    cfg = {
+        "key": (request.headers.get("x-llm-key") or "").strip() or None,
+        "model": (request.headers.get("x-llm-model") or "").strip() or None,
+        "base": (request.headers.get("x-llm-base") or "").strip() or None,
+    }
+    if cfg["base"]:
+        try:
+            cfg["base"] = llm.validate_base(cfg["base"])
+        except llm.LLMError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     with connect() as conn:
         project = _own_project(conn, project_id, user)
         if project["status"] == "running":
@@ -734,26 +853,28 @@ def run_project(project_id: int, background: BackgroundTasks, request: Request, 
         docs = conn.execute("SELECT id FROM documents WHERE project_id = ?", (project_id,)).fetchone()
         if docs is None:
             raise HTTPException(400, "请先上传材料")
+        # 原子占位：并发点击时只有第一个请求能拿到任务
+        claimed = conn.execute(
+            "UPDATE projects SET status = 'running', updated_at = ? WHERE id = ? AND status <> 'running'",
+            (now(), project_id),
+        )
+        if claimed.rowcount == 0:
+            raise HTTPException(409, "任务正在执行")
         # 原子扣减积分
         cur = conn.execute(
             "UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ?",
             (CREDITS_PER_RUN, user["id"], CREDITS_PER_RUN),
         )
         if cur.rowcount == 0:
+            conn.execute("UPDATE projects SET status = ? WHERE id = ?", (project["status"], project_id))
             raise HTTPException(402, "积分不足，请联系管理员充值")
         conn.execute(
             "INSERT INTO credits_ledger(user_id, delta, reason, project_id, created_at) VALUES (?,?,?,?,?)",
             (user["id"], -CREDITS_PER_RUN, "核查任务", project_id, now()),
         )
-        conn.execute("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?", ("running", now(), project_id))
         remaining = conn.execute("SELECT credits FROM users WHERE id = ?", (user["id"],)).fetchone()["credits"]
         audit(conn, user["id"], "run_project", f"project:{project_id}", f"-{CREDITS_PER_RUN} 积分")
 
-    cfg = {
-        "key": (request.headers.get("x-llm-key") or "").strip() or None,
-        "model": (request.headers.get("x-llm-model") or "").strip() or None,
-        "base": (request.headers.get("x-llm-base") or "").strip() or None,
-    }
     background.add_task(execute_pipeline, project_id, user["id"], cfg)
     return {"status": "running", "credits": remaining}
 
@@ -821,12 +942,16 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)) -> d
             "SELECT path FROM documents WHERE project_id = ?", (project_id,)).fetchall()]
         reports = [dict(r) for r in conn.execute(
             "SELECT path FROM reports WHERE project_id = ?", (project_id,)).fetchall()]
+        version_files = [dict(r) for r in conn.execute(
+            "SELECT v.storage_path FROM document_versions v JOIN document_groups g ON g.id = v.group_id"
+            " WHERE g.project_id = ?", (project_id,)).fetchall()]
         conn.execute("DELETE FROM citations WHERE finding_id IN (SELECT id FROM findings WHERE project_id = ?)", (project_id,))
         conn.execute("DELETE FROM findings WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM qc_runs WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM review_requests WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM task_runs WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM external_checks WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM extractions WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM paragraphs WHERE version_id IN ("
                      "SELECT id FROM document_versions WHERE group_id IN ("
                      "SELECT id FROM document_groups WHERE project_id = ?))", (project_id,))
@@ -837,9 +962,9 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)) -> d
         conn.execute("DELETE FROM reports WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         audit(conn, user["id"], "delete_project", f"project:{project_id}", project["title"])
-    for row in docs + reports:
+    for row in docs + reports + version_files:
         try:
-            Path(row["path"]).unlink(missing_ok=True)
+            Path(row["path"] if "path" in row else row["storage_path"]).unlink(missing_ok=True)
         except OSError:
             pass
     return {"ok": True, "deleted": project_id}
@@ -847,25 +972,48 @@ def delete_project(project_id: int, user: dict = Depends(get_current_user)) -> d
 
 @app.post("/api/projects/{project_id}/reset")
 def reset_project(project_id: int, user: dict = Depends(get_current_user)) -> dict:
+    """清空本轮结论，回到草稿。报告文件一并删除，避免旧报告被再次下载。"""
     with connect() as conn:
         project = _own_project(conn, project_id, user)
-        for pid in [project_id]:
-            conn.execute("DELETE FROM findings WHERE project_id = ?", (pid,))
-            conn.execute("DELETE FROM qc_runs WHERE project_id = ?", (pid,))
-            conn.execute("DELETE FROM reports WHERE project_id = ?", (pid,))
+        reports = [dict(r) for r in conn.execute(
+            "SELECT path FROM reports WHERE project_id = ?", (project_id,)).fetchall()]
+        conn.execute("DELETE FROM findings WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM qc_runs WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM reports WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM review_requests WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM extractions WHERE project_id = ?", (project_id,))
         conn.execute("UPDATE projects SET status = 'draft', task_spec = NULL, missing = NULL, updated_at = ? WHERE id = ?",
                      (now(), project_id))
+        audit(conn, user["id"], "reset_project", f"project:{project_id}")
+    for row in reports:
+        try:
+            Path(row["path"]).unlink(missing_ok=True)
+        except OSError:
+            pass
     return {"ok": True}
 
 
 @app.get("/api/projects/{project_id}/report")
-def download_report(project_id: int, user: dict = Depends(get_current_user)):
+def download_report(project_id: int, fmt: str = Query("docx", alias="format"),
+                    user: dict = Depends(get_current_user)):
     with connect() as conn:
         _own_project(conn, project_id, user)
         row = conn.execute(
             "SELECT * FROM reports WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
     if row is None or not Path(row["path"]).exists():
         raise HTTPException(404, "报告尚未生成")
+    if fmt.lower() in {"md", "markdown"}:
+        md_path = Path(row["path"]).with_suffix(".md")
+        if not md_path.exists():
+            raise HTTPException(404, "Markdown 报告尚未生成，请重新发起核查")
+        return FileResponse(md_path, filename=f"核查报告-项目{project_id}-v{row['version']}.md",
+                            media_type="text/markdown; charset=utf-8")
+    if fmt.lower() == "pdf":
+        pdf_path = Path(row["path"]).with_suffix(".pdf")
+        if not pdf_path.exists():
+            raise HTTPException(404, "PDF 报告尚未生成，请重新发起核查")
+        return FileResponse(pdf_path, filename=f"核查报告-项目{project_id}-v{row['version']}.pdf",
+                            media_type="application/pdf")
     return FileResponse(row["path"], filename=f"核查报告-项目{project_id}-v{row['version']}.docx",
                         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
@@ -924,8 +1072,11 @@ def execute_pipeline(project_id: int, user_id: int, cfg: dict | None = None) -> 
         missing_all: list[dict] = []
         notices: list[str] = []
         qc_checks: list[dict] = []
+        qc_issues: list[dict] = []
+        qc_checked_total = 0
         specs: list[dict] = []
         checked: list[str] = []
+        checked_keys: list[str] = []
         skipped: list[str] = []
         qc_passed = True
         failed_total = 0
@@ -959,6 +1110,17 @@ def execute_pipeline(project_id: int, user_id: int, cfg: dict | None = None) -> 
                         f"抽取 {len(extracted['items'])} 项，冲突 {len(extracted['conflicts'])} 组")
             items_all.extend(extracted["items"])
             conflicts_all.extend(extracted["conflicts"])
+            # 抽取结果落库：结论之外，也要能回答「模型当时到底抽到了什么」
+            with connect() as conn:
+                conn.execute("DELETE FROM extractions WHERE project_id = ? AND board = ?", (project_id, key))
+                for it in extracted["items"]:
+                    conn.execute(
+                        "INSERT INTO extractions(project_id, board, document_id, filename, page, field, value,"
+                        " quote, confidence, source, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (project_id, key, it.get("document_id"), it.get("filename"), it.get("page"),
+                         it.get("field"), it.get("value"), it.get("quote"), it.get("confidence"),
+                         it.get("source"), now()),
+                    )
 
             qc_result: dict = {}
             findings: list[dict] = []
@@ -986,16 +1148,27 @@ def execute_pipeline(project_id: int, user_id: int, cfg: dict | None = None) -> 
 
             qc_passed = qc_passed and bool(qc_result.get("passed"))
             failed_total += int(qc_result.get("failed", 0) or 0)
+            qc_checked_total += int(qc_result.get("checked", 0) or 0)
             notices.extend(qc_result.get("notices", []) or [])
             qc_checks.extend(qc_result.get("checks", []) or [])
+            qc_issues.extend(qc_result.get("issues", []) or [])
             findings_all.extend(findings)
             checked.append(label)
+            checked_keys.append(key)
 
         if not checked:
+            # 一个维度都没跑成：把积分退回去，别让用户为「什么都没做」付费
             with connect() as conn:
                 conn.execute("UPDATE projects SET status = 'awaiting_materials', missing = ?, updated_at = ?"
                              " WHERE id = ?",
                              (json.dumps(missing_all, ensure_ascii=False), now(), project_id))
+                conn.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (CREDITS_PER_RUN, user_id))
+                conn.execute(
+                    "INSERT INTO credits_ledger(user_id, delta, reason, project_id, created_at) VALUES (?,?,?,?,?)",
+                    (user_id, CREDITS_PER_RUN, "材料不全未执行退还", project_id, now()),
+                )
+                audit(conn, user_id, "pipeline_refund", f"project:{project_id}",
+                      f"三维修查全部因缺料跳过，退还 {CREDITS_PER_RUN} 积分")
             return
 
         with connect() as conn:
@@ -1023,11 +1196,20 @@ def execute_pipeline(project_id: int, user_id: int, cfg: dict | None = None) -> 
         merged_spec.update({
             "board": "all",
             "boards": [BOARDS[k] for k in BOARD_SEQUENCE],
+            "checked_boards": checked_keys,
             "checks": [c for s in specs for c in s.get("checks", [])],
             "required_materials": [m for s in specs for m in s.get("required_materials", [])],
         })
         merged_extracted = {"items": items_all, "conflicts": conflicts_all}
-        merged_qc = {"passed": qc_passed, "failed": failed_total, "notices": notices, "checks": qc_checks}
+        merged_qc = {
+            "passed": qc_passed,
+            "checked": qc_checked_total,
+            "failed": failed_total,
+            "issues": qc_issues,
+            "notices": notices,
+            "checks": qc_checks,
+            "note": "规范依据待补" if any(not f.get("rule_ref") for f in findings_all) else "",
+        }
 
         # 港股上市评估专项材料：缺了不阻断三维修查，但资格测试做不了，需要提醒补件
         hk_missing = agents.check_hk_missing(docs)
@@ -1046,6 +1228,11 @@ def execute_pipeline(project_id: int, user_id: int, cfg: dict | None = None) -> 
         with connect() as conn:
             conn.execute("UPDATE projects SET task_spec = ?, updated_at = ? WHERE id = ?",
                          (json.dumps(merged_spec, ensure_ascii=False), now(), project_id))
+            # 合并质检单独落一条 round=99，供项目页/评分读「本轮整体」而不是最后一个维度
+            conn.execute(
+                "INSERT INTO qc_runs(project_id, round, passed, detail, created_at) VALUES (?,?,?,?,?)",
+                (project_id, 99, 1 if qc_passed else 0, json.dumps(merged_qc, ensure_ascii=False), now()),
+            )
             count = conn.execute("SELECT COUNT(*) AS c FROM reports WHERE project_id = ?", (project_id,)).fetchone()["c"]
             version = count + 1
             path = REPORT_DIR / f"project-{project_id}-v{version}.docx"
@@ -1058,8 +1245,23 @@ def execute_pipeline(project_id: int, user_id: int, cfg: dict | None = None) -> 
             ).fetchone()
             triggers = review.evaluate(project, findings_all, merged_extracted, merged_qc, dict(stats))
 
+            if len(checked) == len(BOARD_SEQUENCE):
+                board_label = "资产权属 / 劳动用工 / 投资退出（三维度全面核查）"
+            else:
+                board_label = "、".join(checked) + "（本次仅执行已列维度）"
+
             build_report(path, project, docs, findings_all, merged_spec, merged_qc, missing_all,
-                         "资产权属 / 劳动用工 / 投资退出（三维度全面核查）", triggers)
+                         board_label, triggers)
+            try:
+                build_markdown(path.with_suffix(".md"), project, docs, findings_all, merged_spec,
+                               merged_qc, missing_all, board_label, triggers)
+            except Exception as exc:  # noqa: BLE001  Markdown 是附加交付物，失败不影响 docx
+                _loud(f"Markdown 报告生成失败（docx 已生成）：{exc}")
+            try:
+                build_pdf(path.with_suffix(".pdf"), project, docs, findings_all, merged_spec,
+                          merged_qc, missing_all, board_label, triggers)
+            except Exception as exc:  # noqa: BLE001  PDF 同理
+                _loud(f"PDF 报告生成失败（docx 已生成）：{exc}")
             conn.execute("INSERT INTO reports(project_id, path, version, created_at) VALUES (?,?,?,?)",
                          (project_id, str(path), version, now()))
 
@@ -1112,8 +1314,66 @@ def admin_overview(admin: dict = Depends(require_admin)) -> dict:
 @app.get("/api/admin/users")
 def admin_users(admin: dict = Depends(require_admin)) -> dict:
     with connect() as conn:
-        rows = conn.execute("SELECT id, email, role, credits, created_at FROM users ORDER BY id").fetchall()
+        rows = conn.execute(
+            "SELECT id, email, role, credits, is_active, created_at FROM users ORDER BY id").fetchall()
     return {"users": [dict(r) for r in rows]}
+
+
+@app.post("/api/admin/users/{user_id}/status")
+def admin_user_status(user_id: int, payload: UserStatusIn, admin: dict = Depends(require_admin)) -> dict:
+    """停用 / 恢复账号：停用后不能登录，已登录的会话也会失效。"""
+    if user_id == admin["id"]:
+        raise HTTPException(400, "不能停用自己的账号")
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "用户不存在")
+        conn.execute("UPDATE users SET is_active = ? WHERE id = ?", (1 if payload.active else 0, user_id))
+        audit(conn, admin["id"], "user_status", f"user:{user_id}",
+              f"{row['email']} -> {'active' if payload.active else 'disabled'}")
+    return {"ok": True, "id": user_id, "active": payload.active}
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_user(user_id: int, admin: dict = Depends(require_admin)) -> dict:
+    """删除账号：先要求停用且无项目，避免把带数据的账号一键抹掉。"""
+    if user_id == admin["id"]:
+        raise HTTPException(400, "不能删除自己")
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "用户不存在")
+        projects = conn.execute("SELECT COUNT(*) AS c FROM projects WHERE user_id = ?", (user_id,)).fetchone()["c"]
+        if projects:
+            raise HTTPException(409, f"该用户仍有 {projects} 个项目，请先停用而不是删除")
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        audit(conn, admin["id"], "delete_user", f"user:{user_id}", row["email"])
+    return {"ok": True, "deleted": user_id}
+
+
+@app.post("/api/admin/users")
+def admin_create_user(payload: AdminUserIn, admin: dict = Depends(require_admin)) -> dict:
+    """管理员建号：公网关闭自助注册后，这是唯一的开户入口。"""
+    email = payload.email.strip()
+    if not EMAIL_RE.match(email):
+        raise HTTPException(400, "邮箱格式不正确")
+    if payload.role not in {"user", "admin"}:
+        raise HTTPException(400, "角色只能是 user 或 admin")
+    with connect() as conn:
+        if conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone():
+            raise HTTPException(409, "该邮箱已存在")
+        cur = conn.execute(
+            "INSERT INTO users(email, pwd_hash, role, credits, created_at) VALUES (?,?,?,?,?)",
+            (email, hash_password(payload.password), payload.role, payload.credits, now()),
+        )
+        uid = cur.lastrowid
+        if payload.credits:
+            conn.execute(
+                "INSERT INTO credits_ledger(user_id, delta, reason, created_at) VALUES (?,?,?,?)",
+                (uid, payload.credits, "管理员开户", now()),
+            )
+        audit(conn, admin["id"], "create_user", f"user:{uid}", f"{email} role={payload.role}")
+    return {"id": uid, "email": email, "role": payload.role, "credits": payload.credits}
 
 
 @app.post("/api/admin/users/{user_id}/credits")
@@ -1148,30 +1408,58 @@ def admin_audit(admin: dict = Depends(require_admin)) -> dict:
     return {"logs": [dict(r) for r in rows]}
 
 
+@app.get("/api/admin/storage")
+def admin_storage(admin: dict = Depends(require_admin)) -> dict:
+    """存储用量与孤立文件（不删除）。"""
+    return storage.scan()
+
+
+@app.post("/api/admin/storage/gc")
+def admin_storage_gc(apply: bool = False, admin: dict = Depends(require_admin)) -> dict:
+    """清理孤立文件；apply=false 时只返回计划。"""
+    result = storage.collect(apply=apply)
+    with connect() as conn:
+        audit(conn, admin["id"], "storage_gc", "storage",
+              f"apply={apply} files={len(result['deleted'])} freed={result['freed_bytes']}")
+    return result
+
+
 @app.get("/api/admin/rules")
 def admin_rules(admin: dict = Depends(require_admin)) -> dict:
-    return {"rules": agents.load_rules("asset")}
+    boards = {key: agents.load_rules(key) for key in BOARD_SEQUENCE}
+    return {"rules": boards["asset"], "boards": boards}
 
 
 @app.put("/api/admin/rules/{rule_id}")
 def admin_update_rule(rule_id: str, payload: RuleUpdateIn, admin: dict = Depends(require_admin)) -> dict:
-    path = Path(agents.RULES_DIR) / "asset.json"
-    data = json.loads(path.read_text(encoding="utf-8"))
+    """跨板块查找要点：以前只写 asset.json，改劳动/股权要点会 404。"""
     hit = None
-    for cp in data.get("checkpoints", []):
-        if cp["id"] == rule_id:
-            hit = cp
+    target_path = None
+    for path in sorted(Path(agents.RULES_DIR).glob("*.json")):
+        if path.name == "scoring.json":
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for cp in data.get("checkpoints", []):
+            if cp.get("id") == rule_id:
+                hit = cp
+                target_path = path
+                break
+        if hit is not None:
+            if payload.rule_ref is not None:
+                hit["rule_ref"] = payload.rule_ref
+            if payload.verification_status:
+                hit["verification_status"] = payload.verification_status
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             break
-    if hit is None:
+    if hit is None or target_path is None:
         raise HTTPException(404, "核查要点不存在")
-    if payload.rule_ref is not None:
-        hit["rule_ref"] = payload.rule_ref
-    if payload.verification_status:
-        hit["verification_status"] = payload.verification_status
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     with connect() as conn:
-        audit(conn, admin["id"], "update_rule", rule_id, json.dumps(payload.model_dump(), ensure_ascii=False)[:300])
-    return {"ok": True, "rule": hit}
+        audit(conn, admin["id"], "update_rule", rule_id,
+              f"{target_path.name} {json.dumps(payload.model_dump(), ensure_ascii=False)[:280]}")
+    return {"ok": True, "rule": hit, "board_file": target_path.name}
 
 
 # ----------------------------------------------------------------- 前端静态托管

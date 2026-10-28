@@ -190,23 +190,43 @@ def _heuristic_extract(doc: dict) -> list[dict]:
     }
     for page, page_text in _pages(_doc_text(doc)):
         for field, kws in flags.items():
+            hit = None
             for kw in kws:
-                idx = page_text.find(kw)
-                if idx >= 0:
-                    items.append(
-                        {
-                            "field": field,
-                            "value": "是",
-                            "document_id": doc["id"],
-                            "filename": doc["filename"],
-                            "page": page,
-                            "quote": _line_of(page_text, idx, idx + len(kw)),
-                            "confidence": 0.7,
-                            "source": "regex",
-                        }
-                    )
+                for m in re.finditer(re.escape(kw), page_text):
+                    idx = m.start()
+                    # 否定语境不算「存在」：「未见质押登记」「未办理抵押」不能被读成已设定
+                    if _negated(page_text, idx, len(kw)):
+                        continue
+                    hit = idx
                     break
+                if hit is not None:
+                    break
+            if hit is None:
+                continue
+            items.append(
+                {
+                    "field": field,
+                    "value": "是",
+                    "document_id": doc["id"],
+                    "filename": doc["filename"],
+                    "page": page,
+                    "quote": _line_of(page_text, hit, hit + 2),
+                    "confidence": 0.7,
+                    "source": "regex",
+                }
+            )
     return items
+
+
+# 否定语境判定：只认「紧邻关键词」的否定，避免把「未达标时触发回购」读成否定
+_NEG_STRONG = re.compile(r"(?:未见|未发现|未设定|未办理|未登记|不存在|未曾)[^。；]{0,10}$")
+_NEG_ADJACENT = re.compile(r"(?:未|没有|无|非)(?:办理|设定|设立|进行|发现|记载|登记|存在|任何|相应)?[^。；，、]{0,2}$")
+
+
+def _negated(text: str, idx: int, length: int) -> bool:
+    """关键词前的否定语境判定（只回看，不看后面：如「抵押未解除」仍算存在抵押）。"""
+    before = text[max(0, idx - 16):idx]
+    return bool(_NEG_STRONG.search(before) or _NEG_ADJACENT.search(before))
 
 
 # ---------------------------------------------------------------- 字段词表（约束抽取，别让规则层失配）
@@ -584,10 +604,11 @@ def _analyze_equity(project: dict, extracted: dict, rules: dict) -> list[dict]:
     # EQT-05 股权结构自洽
     # 只拿「章程 / 股东名册」这类完整列示的文档来求和：代持说明里会写「其中 5% 代持」，
     # 那是某股东持股的一部分，混进来必然超过 100%。
+    # 注意：不能对取值去重——两个股东各持 30% 是两笔，去重会把 100% 算成 70%。
     registry = [i for i in holding
                 if any(k in (i.get("filename") or "") for k in ("章程", "股东名册", "股权结构"))]
     source = registry or holding
-    ratios = sorted({r for r in (_num([i]) for i in source) if r is not None})
+    ratios = [r for r in (_num([i]) for i in source) if r is not None]
     if len(ratios) >= 2 and abs(sum(ratios) - 100) > 0.5:
         findings.append(_finding(
             "EQT-05", "medium", "股东持股比例合计不等于 100%",
@@ -671,17 +692,36 @@ def _analyze_asset(project: dict, extracted: dict, rules: dict) -> list[dict]:
             )
 
     # AST-04 租赁合法性
+    # 判断基准必须是「该物业的登记权利人」，不是拟上市主体：承租人向房东租房是常态，
+    # 拿承租人去比对出租方，会把每一份正常租赁都判成高风险。
     if lessors:
-        bad = [i for i in lessors if subject and subject not in i["value"]]
-        if bad:
+        owners = [o["value"] for o in holders if o.get("value")]
+        if owners:
+            bad = [i for i in lessors
+                   if not any(o in i["value"] or i["value"] in o for o in owners)]
+            if bad:
+                findings.append(
+                    _finding(
+                        "AST-04",
+                        "high",
+                        "经营场所出租方非产权人",
+                        f"租赁合同记载的出租方为「{bad[0]['value']}」，"
+                        f"与材料中登记的产权人（{'、'.join(owners[:3])}）不一致，存在无权出租或转租风险。",
+                        "核验出租方产权证明与转租授权；无法补正的，评估搬迁成本与替代场地。",
+                        [_cite(i) for i in bad],
+                        cps.get("AST-04"),
+                    )
+                )
+        else:
             findings.append(
                 _finding(
                     "AST-04",
-                    "high",
-                    "经营场所出租方非产权人",
-                    f"租赁合同记载的出租方为「{bad[0]['value']}」，非拟上市主体，存在无权出租或转租风险。",
-                    "核验出租方产权证明与转租授权；无法补正的，评估搬迁成本与替代场地。",
-                    [_cite(i) for i in bad],
+                    "medium",
+                    "出租方产权人未核实",
+                    f"租赁合同记载的出租方为「{lessors[0]['value']}」，"
+                    "但材料中未找到该租赁物业的权属证明，无法确认其是否为产权人或有权转租。",
+                    "补充租赁物业的不动产权证或转租授权文件；核对出租方与登记权利人是否一致。",
+                    [_cite(i) for i in lessors],
                     cps.get("AST-04"),
                 )
             )
@@ -737,13 +777,28 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", "", text or "")
 
 
-def qc(project: dict, findings: list[dict], docs: list[dict], rules: dict) -> dict:
-    """质检：逐条核查证据锚点是否真实存在于原文、规则是否存在。
+def _pages_by_doc(docs: list[dict]) -> dict[int, dict[int, str]]:
+    """把每份文档拆成 {页码: 归一化正文}，供质检校验「原文是否真的在所标页码」。"""
+    out: dict[int, dict[int, str]] = {}
+    for doc in docs:
+        parts = re.split(r"\[\[PAGE (\d+)\]\]", _doc_text(doc))
+        if len(parts) == 1:
+            out[doc["id"]] = {1: _norm(parts[0])}
+            continue
+        pages: dict[int, str] = {}
+        for i in range(1, len(parts), 2):
+            pages[int(parts[i])] = _norm(parts[i + 1] if i + 1 < len(parts) else "")
+        out[doc["id"]] = pages
+    return out
 
-    阻断项（fail）：引用的原文在文件中找不到、引用了不存在的核查要点、风险等级非法。
+
+def qc(project: dict, findings: list[dict], docs: list[dict], rules: dict) -> dict:
+    """质检：逐条核查证据锚点是否真实存在于原文、页码是否对得上、规则是否存在。
+
+    阻断项（fail）：引用的原文在文件中找不到 / 不在所标页码 / 引用了不存在的核查要点 / 风险等级非法。
     提示项（insufficient）：材料缺失导致无法验证——如实标注，不冒充"已验证"。
     """
-    docs_by_id = {d["id"]: _doc_text(d) for d in docs}
+    pages_by_doc = _pages_by_doc(docs)
     rule_ids = {cp["id"] for cp in rules.get("checkpoints", [])}
     issues: list[dict] = []
     notices: list[dict] = []
@@ -762,9 +817,29 @@ def qc(project: dict, findings: list[dict], docs: list[dict], rules: dict) -> di
             continue
         else:
             for c in locatable:
-                body = _norm(docs_by_id.get(c["document_id"], ""))
-                if not c.get("quote") or _norm(c["quote"]) not in body:
-                    problem = f"证据原文无法在文件中定位（文件 {c.get('filename')}，第 {c.get('page')} 页）"
+                pages = pages_by_doc.get(c["document_id"], {})
+                quote = _norm(c.get("quote"))
+                page = c.get("page")
+                if not quote:
+                    problem = f"证据缺少原文片段（文件 {c.get('filename')}）"
+                    break
+                if page in pages:
+                    # 页码存在：必须落在该页，而不是随便一页
+                    if quote not in pages[page]:
+                        elsewhere = any(quote in body for body in pages.values())
+                        problem = (
+                            f"证据原文不在所标页码（文件 {c.get('filename')}，第 {page} 页）"
+                            + ("，该片段出现在其他页" if elsewhere else "")
+                        )
+                        break
+                elif page is not None and pages:
+                    problem = (
+                        f"所标页码超出文件页数（文件 {c.get('filename')}，第 {page} 页，"
+                        f"实际共 {len(pages)} 页）"
+                    )
+                    break
+                elif not any(quote in body for body in pages.values()):
+                    problem = f"证据原文无法在文件中定位（文件 {c.get('filename')}，第 {page} 页）"
                     break
         if f.get("rule_id") and f["rule_id"] not in rule_ids:
             problem = f"引用了不存在的核查要点 {f['rule_id']}"

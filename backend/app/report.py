@@ -178,7 +178,161 @@ def build_report(path: Path, project: dict, docs: list[dict], findings: list[dic
                 continue
             doc.add_paragraph(f"第 {clause['code']} 条（p{clause['page']}）", style="List Bullet")
             doc.add_paragraph(f"{clause['text']}")
+            if clause.get("truncated"):
+                doc.add_paragraph(
+                    "（该条正文在内置索引中被截断，引用前请回 PDF 第 "
+                    f"{clause['page']} 页核对完整条文）", style="List Bullet")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(path))
+    return path
+
+
+def _md_cell(text) -> str:
+    return str(text if text is not None else "").replace("|", "\\|").replace("\n", " ")
+
+
+def build_markdown(path: Path, project: dict, docs: list[dict], findings: list[dict],
+                   spec: dict, qc_result: dict, missing: list[dict],
+                   board_label: str = "资产权属与经营基础", triggers: list[dict] | None = None) -> Path:
+    """与 docx 同源的 Markdown 版本：便于进知识库、进版本库、做 diff。"""
+    out: list[str] = []
+    add = out.append
+    add(f"# {project['title']}")
+    add("")
+    add(f"> {board_label}核查报告 · 机器辅助整理，不构成法律意见")
+    add("")
+    if project.get("is_demo"):
+        add("> **【虚构测试样本 · 仅用于系统演示，不得用于任何真实交易或法律结论】**")
+        add("")
+    add("| 项 | 内容 |")
+    add("|---|---|")
+    add(f"| 拟上市主体 | {_md_cell(project.get('subject_name') or '（未填写）')} |")
+    add(f"| 业务板块 | {_md_cell(board_label)} |")
+    add(f"| 生成时间 | {str(project.get('updated_at', '')).replace('T', ' ')[:19]} |")
+    add(f"| 分析模式 | {'演示模式（未接模型，规则启发式）' if spec.get('mode') == 'mock' else '模型分析（DeepSeek）'} |")
+    add(f"| 材料数量 | {len(docs)} 份 |")
+    add(f"| 质检结论 | {'通过' if qc_result.get('passed') else '未通过'}"
+        f"（核查 {qc_result.get('checked', 0)} 条，阻断项 {qc_result.get('failed', 0)} 条） |")
+    add("")
+
+    add("## 一、核查范围")
+    add("")
+    add(f"核查目标：{spec.get('objective', '')}")
+    add("")
+    for cp in spec.get("checks", []):
+        add(f"- {cp['id']} {cp['topic']}：{cp['check_point']}")
+    add("")
+
+    add("## 二、材料清单")
+    add("")
+    add("| 序号 | 文件名 | 页数 | 解析状态 |")
+    add("|---|---|---|---|")
+    for idx, d in enumerate(docs, 1):
+        add(f"| {idx} | {_md_cell(d['filename'])} | {d.get('pages', '')} | {d.get('status', '')} |")
+    add("")
+
+    if missing:
+        add("## 三、缺失材料")
+        add("")
+        for m in missing:
+            add(f"- {m['material']} —— 用于 {m['needed_for']}")
+        add("")
+
+    add("## 四、风险清单")
+    add("")
+    if findings:
+        add("| 编号 | 等级 | 结论 | 证据定位 | 质检 |")
+        add("|---|---|---|---|---|")
+        for f in findings:
+            loc = "；".join(f"{c['filename']} p{c['page']}" for c in f["citations"] if c.get("document_id")) or "（材料缺失）"
+            add(f"| {f['code']} | {LEVEL_CN.get(f['risk_level'], f['risk_level'])} | {_md_cell(f['title'])} |"
+                f" {_md_cell(loc)} | {QC_CN.get(f.get('qc', ''), '')} |")
+    else:
+        add("本次未识别出风险项。注意：这不等于不存在风险，仅表示在现有材料与核查要点范围内未发现。")
+    add("")
+
+    add("## 五、逐项说明与整改建议")
+    add("")
+    for idx, f in enumerate(findings, 1):
+        add(f"### {idx}. [{f['code']}] {f['title']}（{LEVEL_CN.get(f['risk_level'])}风险）")
+        add("")
+        add(f"- **事实**：{f['fact']}")
+        add(f"- **依据**：{f.get('rule_id') or '—'} {f.get('rule_ref') or '（规范依据待补）'}")
+        bound = rule_refs.bound_clauses(f.get("code", ""))
+        if bound:
+            add("- **评估落点**：" + "；".join(
+                f"第 {b['code']} 条（p{b['page']}）" for b in bound))
+        add(f"- **整改建议**：{f['advice']}")
+        anchor = [c for c in f["citations"] if c.get("document_id")]
+        if anchor:
+            add("- **证据**：")
+            for c in anchor:
+                add(f"  - 《{c['filename']}》第 {c['page']} 页：「{c['quote'][:300]}」")
+        else:
+            add("- **证据**：（无原文锚点：对应材料缺失，本条仅作补料提示）")
+        add(f"- **质检**：{QC_CN.get(f.get('qc', ''), '未质检')}")
+        add("")
+
+    add("## 六、质检结论")
+    add("")
+    add(f"共核查 {qc_result.get('checked', 0)} 条结论；阻断项 {qc_result.get('failed', 0)} 条；"
+        f"结果：{'通过' if qc_result.get('passed') else '未通过'}。")
+    add("")
+    for issue in qc_result.get("issues", []):
+        add(f"- [{issue['code']}] {issue['title']}：{issue['reason']}")
+    for notice in qc_result.get("notices", []):
+        add(f"- [{notice['code']}] {notice['title']}：{notice['reason']}")
+    if qc_result.get("note"):
+        add(f"- 注：{qc_result['note']}")
+    add("")
+
+    if triggers:
+        add("## 七、须律师复核的事项")
+        add("")
+        add(f"本次核查触发 {len(triggers)} 项复核条件，律师确认前本报告不得作为最终结论。")
+        add("")
+        for t in triggers:
+            add(f"- **{t['code']} {t['title']}**（{t['category']}）")
+            add(f"  - {t['detail']}")
+            for ev in t.get("evidence", []):
+                add(f"  - {ev}")
+        add("")
+
+    add("## 声明与限制")
+    add("")
+    for line in [
+        "本报告为机器辅助整理结果，不构成法律意见，不替代律师专业判断。",
+        "结论仅基于本次上传材料及其可提取文本；扫描件、缺页、未提供材料的核查项未完成。",
+        "每条结论均附证据定位（文件、页码、原文片段）；未附定位的结论视为未验证。",
+        "核查要点来源于团队办案经验；规范依据尚在核实中，未核实前不得据以对外作出法律结论。",
+        "用户上传材料及其内容不向第三方公开。",
+    ]:
+        add(f"- {line}")
+    add("")
+
+    codes: list[str] = []
+    for f in findings:
+        for clause in rule_refs.bound_clauses(f.get("code", "")):
+            if clause["code"] not in codes:
+                codes.append(clause["code"])
+    if codes:
+        add("## 附：所引上市规则条文")
+        add("")
+        add("以下条文摘自港交所《主板上市规则》综合版，页码为 PDF 页序，供核对原文用。")
+        add("")
+        for code in codes:
+            clause = rule_refs.by_code(code)
+            if not clause:
+                continue
+            add(f"**第 {clause['code']} 条（p{clause['page']}）**")
+            add("")
+            add(clause["text"])
+            add("")
+            if clause.get("truncated"):
+                add(f"> 该条正文在内置索引中被截断，引用前请回 PDF 第 {clause['page']} 页核对完整条文。")
+                add("")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(out), encoding="utf-8")
     return path

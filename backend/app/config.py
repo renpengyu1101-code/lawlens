@@ -28,7 +28,10 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 CREDITS_PER_RUN = int(os.getenv("DILIGENCE_CREDITS_PER_RUN", "10"))
 REGISTER_BONUS = int(os.getenv("DILIGENCE_REGISTER_BONUS", "100"))
 MAX_QC_ROUNDS = 2
-MAX_UPLOAD_MB = 20
+# 单文件上限 / 单项目上限 / 单项目文件数上限
+MAX_UPLOAD_MB = int(os.getenv("DILIGENCE_MAX_UPLOAD_MB", "20"))
+MAX_PROJECT_MB = int(os.getenv("DILIGENCE_MAX_PROJECT_MB", "200"))
+MAX_FILES_PER_PROJECT = int(os.getenv("DILIGENCE_MAX_FILES_PER_PROJECT", "60"))
 
 MOCK_MODE = not bool(DEEPSEEK_API_KEY)
 # 演示模式（无 Key）下每步之间的停顿，让前端进度条看得见；接真实模型时无需它

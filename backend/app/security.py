@@ -30,11 +30,16 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 
-def issue_token(user_id: int) -> str:
-    return _serializer.dumps({"uid": user_id})
+def _pwd_tag(pwd_hash: str) -> str:
+    """会话版本标记：随口令哈希变化，改密后旧 cookie 自动失效。"""
+    return hashlib.sha256((pwd_hash or "").encode()).hexdigest()[:12]
 
 
-def read_token(request: Request) -> int | None:
+def issue_token(user_id: int, pwd_hash: str = "") -> str:
+    return _serializer.dumps({"uid": user_id, "v": _pwd_tag(pwd_hash)})
+
+
+def read_token(request: Request) -> dict | None:
     raw = request.cookies.get(COOKIE_NAME)
     if not raw:
         return None
@@ -43,27 +48,37 @@ def read_token(request: Request) -> int | None:
     except (BadSignature, SignatureExpired):
         return None
     uid = data.get("uid")
-    return int(uid) if isinstance(uid, int) else None
+    if not isinstance(uid, int):
+        return None
+    return {"uid": uid, "v": data.get("v", "")}
 
 
 def get_current_user(request: Request) -> dict:
-    uid = read_token(request)
-    if uid is None:
+    payload = read_token(request)
+    if payload is None:
         raise HTTPException(status_code=401, detail="未登录")
     with connect() as conn:
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (payload["uid"],)).fetchone()
     if row is None:
         raise HTTPException(status_code=401, detail="会话无效")
+    if "is_active" in row.keys() and row["is_active"] == 0:
+        raise HTTPException(status_code=401, detail="账号已停用")
+    if payload["v"] != _pwd_tag(row["pwd_hash"]):
+        raise HTTPException(status_code=401, detail="会话已失效，请重新登录")
     return dict(row)
 
 
 def get_optional_user(request: Request) -> dict | None:
-    uid = read_token(request)
-    if uid is None:
+    payload = read_token(request)
+    if payload is None:
         return None
     with connect() as conn:
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
-    return dict(row) if row else None
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (payload["uid"],)).fetchone()
+    if row is None or payload["v"] != _pwd_tag(row["pwd_hash"]):
+        return None
+    if "is_active" in row.keys() and row["is_active"] == 0:
+        return None
+    return dict(row)
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:

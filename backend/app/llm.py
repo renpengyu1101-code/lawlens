@@ -5,8 +5,11 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
 import re
+from urllib.parse import urlparse
 
 import httpx
 
@@ -17,14 +20,41 @@ class LLMError(RuntimeError):
     pass
 
 
+def validate_base(base: str) -> str:
+    """用户自填的接口地址：只允许 http(s) 公网地址，挡住指向内网/本机的 SSRF 探测。"""
+    base = (base or "").strip()
+    if not base:
+        return base
+    parsed = urlparse(base)
+    if parsed.scheme not in {"http", "https"}:
+        raise LLMError("接口地址必须是 http 或 https")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise LLMError("接口地址缺少主机名")
+    if os.getenv("DILIGENCE_ALLOW_PRIVATE_LLM", "0") == "1":
+        return base
+    if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
+        raise LLMError("接口地址指向本机/内网，已被拒绝（自建服务请设 DILIGENCE_ALLOW_PRIVATE_LLM=1）")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return base
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified:
+        raise LLMError("接口地址指向内网/本机，已被拒绝（自建服务请设 DILIGENCE_ALLOW_PRIVATE_LLM=1）")
+    return base
+
+
 def resolve(cfg: dict | None = None) -> dict:
     """合并请求级配置与环境变量，返回实际使用的连接参数。"""
     cfg = cfg or {}
     key = (cfg.get("key") or DEEPSEEK_API_KEY or "").strip()
+    raw_base = (cfg.get("base") or "").strip()
+    if raw_base:
+        raw_base = validate_base(raw_base)
     return {
         "key": key,
         "model": (cfg.get("model") or DEEPSEEK_MODEL).strip(),
-        "base": (cfg.get("base") or DEEPSEEK_BASE_URL).strip().rstrip("/"),
+        "base": (raw_base or DEEPSEEK_BASE_URL).strip().rstrip("/"),
         "enabled": bool(key),
     }
 

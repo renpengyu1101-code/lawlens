@@ -33,8 +33,8 @@
           "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 }, "basis": "规则库 LAB-02" },
         { "id": "B3", "name": "劳务派遣合规", "points": 3, "source": "findings", "codes": ["LAB-03"],
           "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 LAB-03" },
-        { "id": "B4", "name": "工时与加班", "points": 3, "source": "findings", "codes": ["LAB-04"],
-          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 LAB-04" },
+        { "id": "B4", "name": "工时与加班", "points": 3, "source": "manual", "codes": ["LAB-04"],
+          "basis": "规则库 LAB-04；当前版本未实现自动判读，需人工核对，不计入自动评分" },
         { "id": "B5", "name": "竞业限制与保密", "points": 2, "source": "findings", "codes": ["LAB-05"],
           "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 LAB-05" },
         { "id": "B6", "name": "历史劳动争议", "points": 2, "source": "findings", "codes": ["LAB-06"],
@@ -57,8 +57,8 @@
           "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 EQT-04" },
         { "id": "C5", "name": "股权变动程序完备", "points": 2, "source": "findings", "codes": ["EQT-05"],
           "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 EQT-05" },
-        { "id": "C6", "name": "特殊权利已终止", "points": 1, "source": "findings", "codes": ["EQT-06"],
-          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 EQT-06" }
+        { "id": "C6", "name": "特殊权利已终止", "points": 1, "source": "manual", "codes": ["EQT-06"],
+          "basis": "规则库 EQT-06；当前版本未实现自动判读，需人工核对，不计入自动评分" }
       ]
     },
     {

@@ -131,7 +131,10 @@ def by_code(code: str, board: str = "主板") -> dict | None:
     hit = index.get((board, code)) or next((v for (_, c), v in index.items() if c == code), None)
     if not hit:
         return None
-    return {k: hit[k] for k in ("code", "chapter", "board", "page", "text") if k in hit}
+    out = {k: hit[k] for k in ("code", "chapter", "board", "page", "text") if k in hit}
+    # 索引构建时正文被截断到 300 字：如实标记，别让「原文」看起来完整
+    out["truncated"] = len(hit.get("text") or "") >= 300
+    return out
 
 
 def format_clause(code: str, board: str = "主板", text_limit: int = 120) -> str:

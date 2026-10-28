@@ -1,4 +1,4 @@
-﻿"""SQLite 访问层：每次请求开连接，行工厂返回 dict 风格 Row。"""
+"""SQLite 访问层：每次请求开连接，行工厂返回 dict 风格 Row。"""
 from __future__ import annotations
 
 import sqlite3
@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     pwd_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
     credits INTEGER NOT NULL DEFAULT 0,
+    is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS credits_ledger (
@@ -155,7 +156,29 @@ CREATE TABLE IF NOT EXISTS external_checks (
     warnings TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS extractions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    board TEXT NOT NULL,
+    document_id INTEGER,
+    filename TEXT,
+    page INTEGER,
+    field TEXT NOT NULL,
+    value TEXT,
+    quote TEXT,
+    confidence REAL,
+    source TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_extractions_project ON extractions(project_id);
 """
+
+
+def _ensure_columns(conn) -> None:
+    """轻量迁移：init_db 只建表不换结构，老库靠这里补列。"""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    if "is_active" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
 
 
 def init_db() -> None:
@@ -163,14 +186,17 @@ def init_db() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")   # 读写并发更稳；备份脚本用 SQLite .backup，兼容
         conn.executescript(SCHEMA)
+        _ensure_columns(conn)
 
 
 @contextmanager
 def connect():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
     try:
         yield conn
         conn.commit()

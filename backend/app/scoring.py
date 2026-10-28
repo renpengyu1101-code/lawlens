@@ -1,4 +1,4 @@
-﻿"""量化评分卡：按 rubric 计算五个维度得分。
+"""量化评分卡：按 rubric 计算五个维度得分。
 
 设计原则：
 - 权重由用户指定；条目分值与扣分系数是初始标定，可调。
@@ -15,7 +15,12 @@ GRADES = [(85, "A"), (70, "B"), (55, "C"), (0, "D")]
 
 
 def load_rubric() -> dict:
-    return json.loads(RUBRIC_PATH.read_text(encoding="utf-8-sig"))
+    """读取评分卡；总分一律以条目分值实算，避免声明 100 而实际 95 的口径漂移。"""
+    rubric = json.loads(RUBRIC_PATH.read_text(encoding="utf-8-sig"))
+    dims = rubric.get("dimensions", [])
+    rubric["declared_total"] = rubric.get("total")
+    rubric["total"] = round(sum(float(d.get("points", 0)) for d in dims), 2)
+    return rubric
 
 
 def _match(findings: list[dict], codes: list[str]) -> list[dict]:
@@ -47,7 +52,11 @@ def score_project(
     missing_count: int,
     versions: dict,
     qc: dict | None,
+    checked_boards: set[str] | list[str] | None = None,
 ) -> dict:
+    """checked_boards：本次真正执行了判读的维度。缺料被跳过的维度必须记 N/A，
+    否则「没查」会以「没有风险命中」的形式变成满分。传 None 表示不做维度级过滤（兼容旧调用）。"""
+    checked = set(checked_boards) if checked_boards is not None else None
     dims: list[dict] = []
     total_earned = 0.0
     total_applicable = 0.0
@@ -65,6 +74,8 @@ def score_project(
         dim_earned = 0.0
         dim_applicable = 0.0
         items: list[dict] = []
+        dim_boards = set(dim.get("boards") or [])
+        dim_skipped = bool(checked is not None and dim_boards and not (dim_boards & checked))
 
         for item in dim["items"]:
             points = float(item["points"])
@@ -78,11 +89,18 @@ def score_project(
                 if not analyzed:
                     applicable = False
                     reasons.append("未执行核查")
+                elif dim_skipped:
+                    applicable = False
+                    reasons.append("该维度材料不全，本次未执行核查")
                 else:
                     hits = _match(findings, item.get("codes", []))
                     ratio, reasons = _deduct(hits, item.get("deduct", {}))
                     earned = points * (1 - ratio)
                     status = "full" if ratio == 0 else ("zero" if ratio >= 1 else "partial")
+
+            elif source == "manual":
+                applicable = False
+                reasons.append("当前版本未实现自动判读，需人工核对")
 
             elif source == "external":
                 if not external_present:
@@ -194,6 +212,7 @@ def score_project(
 
     return {
         "total_points": rubric["total"],
+        "declared_total": rubric.get("declared_total", rubric["total"]),
         "earned": round(total_earned, 1),
         "applicable": round(total_applicable, 1),
         "coverage": round(coverage, 3),

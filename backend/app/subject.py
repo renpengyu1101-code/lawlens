@@ -40,6 +40,10 @@ def project_inputs(conn, project: dict) -> dict:
     corpus = "\n".join((d["text"] or "") + " " + d["filename"] for d in docs)
     present = [t for t in required if any(k in corpus for k in agents.MATERIAL_KEYWORDS.get(t, []))]
     missing = json.loads(project["missing"]) if project.get("missing") else []
+    spec = json.loads(project["task_spec"]) if project.get("task_spec") else {}
+    checked_boards = spec.get("checked_boards")
+    if checked_boards is None and project["board"] != "all":
+        checked_boards = [project["board"]]
 
     return {
         "analyzed": project["status"] in ACTIVE,
@@ -52,6 +56,7 @@ def project_inputs(conn, project: dict) -> dict:
         "versions": {"groups": groups, "versions": versions,
                      "conflict": any(f["code"] == "AST-06" for f in findings)},
         "qc": json.loads(qc_row["detail"]) if qc_row else None,
+        "checked_boards": checked_boards,
     }
 
 
@@ -74,10 +79,13 @@ def _merge(conn, projects: list[dict], rubric: dict) -> dict:
     qc_total = {"checked": 0, "failed": 0, "notices": []}
     external_findings: list[dict] = []
     external_present = False
+    checked_union: set[str] = set()
 
     for project in projects:
         data = project_inputs(conn, project)
         findings.extend(data["findings"])
+        if data.get("checked_boards"):
+            checked_union |= set(data["checked_boards"])
         for t in data["required_materials"]:
             if t not in required:
                 required.append(t)
@@ -108,6 +116,7 @@ def _merge(conn, projects: list[dict], rubric: dict) -> dict:
         versions={"groups": groups, "versions": versions,
                   "conflict": any(f["code"] == "AST-06" for f in findings)},
         qc=qc_total if qc_total["checked"] else None,
+        checked_boards=list(checked_union) if checked_union else None,
     )
 
 
