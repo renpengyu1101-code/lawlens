@@ -1,193 +1,146 @@
-# LawLens（演示版 v0.1）
+# LawLens · 港股上市评估
 
-把办案经验固化为「材料核查 → 风险识别 → 整改跟踪 → 成果整理」的流水线。
-第一个板块：**资产权属与经营基础**。
+把「翻材料、找问题、写报告」做成一条可复现的流水线：上传尽调材料 → 三维度核查 → 逐条证据锚点 → 生成带条款索引的评估报告。
 
-> **当前为演示版本**：样本为虚构、规则库的规范依据仍在核实（界面标"待补"）。
-> 不得用于任何真实交易、尽调或对外法律结论。
+面向拟赴港上市企业的法务与中介团队，**机器辅助整理，不替代律师判断**。
 
 ---
 
-## 1. 目录结构
+## 它能做什么
 
-```
-diligence-platform/
-├─ backend/                 FastAPI 后端
-│  ├─ app/main.py           路由：认证/项目/上传/流水线/报告/后台
-│  ├─ app/agents.py         四个 Agent：意图识别·资料·分析·质检
-│  ├─ app/parsers.py        PDF/DOCX/TXT 解析（保留页码锚点）
-│  ├─ app/report.py         docx 报告生成
-│  ├─ app/rules/*.json      三个板块的核查要点库（办案经验；规范依据待补）
-│  └─ data/                 SQLite 与上传文件（运行后生成）
-├─ frontend/                React + Vite
-├─ samples/虚构测试样本/     7 份虚构材料 + 说明
-└─ scripts/                 make_samples.py · smoke_test.py
-```
-
-## 2. 快速开始
-
-```powershell
-# 1) 后端
-cd diligence-platform
-python -m venv .venv
-.venv\Scripts\pip install -r backend\requirements.txt
-.venv\Scripts\python scripts\make_samples.py        # 生成虚构样本
-
-# 2) 前端
-cd frontend
-pnpm install
-pnpm run build            # 产物 dist/，后端会自动托管
-
-# 3) 启动（在 backend 目录）
-cd ..\backend
-..\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-打开 <http://127.0.0.1:8000> 即为完整站点（前端与 API 同源）。
-
-**开发模式**（前端热更新）：`frontend` 目录下 `pnpm run dev`，Vite 会把 `/api` 代理到 8000。
-
-## 3. 环境变量
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `DEEPSEEK_API_KEY` | 空 | 为空时进入**演示模式**（规则启发式，界面标注），配置后走模型 |
-| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容端点 |
-| `DEEPSEEK_MODEL` | `deepseek-chat` | 模型名 |
-| `DILIGENCE_SECRET` | `dev-only-change-me` | 会话签名密钥，**部署前必须改**（`start.cmd -Init` 会自动生成） |
-| `DILIGENCE_DATA_DIR` | `backend/data` | 数据库与文件存储位置 |
-| `DILIGENCE_CREDITS_PER_RUN` | `10` | 单次核查消耗积分 |
-| `DILIGENCE_REGISTER_BONUS` | `100` | 注册赠送积分 |
-| `DILIGENCE_ADMIN_EMAIL` | `admin` | 首个管理员账号（仅首次初始化时生效） |
-| `DILIGENCE_ADMIN_PASSWORD` | 空 | 首个管理员密码；留空时首次启动随机生成并打印一次，**已存在的账号不受此变量影响** |
-| `DILIGENCE_OCR` | `1` | 设为 `0` 关闭 OCR（扫描件直接标记 `needs_ocr`） |
-| `DILIGENCE_OCR_DPI` | `200` | PDF 转图片的分辨率；扫描件模糊时可提到 300 |
-| `DILIGENCE_OCR_MAX_PAGES` | `30` | 单份 PDF 最多 OCR 多少页，超过的页不再识别 |
-| `DILIGENCE_OCR_MIN_SCORE` | `0.5` | 识别置信度低于此值的行丢弃 |
-
-## 3.2 扫描件与 OCR
-
-支持 PDF / DOCX / TXT / MD / CSV，以及 PNG、JPG、BMP、TIF、WebP 图片。
-
-- PDF 先抽文字层；抽不到（或少于 40 字）才转图片走 OCR——文字版 PDF 不会白跑 OCR。
-- OCR 用本地引擎 `rapidocr-onnxruntime`，**不联网、不外发**；识别结果照样带 `[[PAGE n]]` 页码标记，锚点仍然可用。
-- 文档状态会显示「OCR 识别」；OCR 也拿不到字才标「扫描件未识别」。
-- 依赖已写进 `backend/requirements.txt`；首次 OCR 会加载模型，约 1–2 秒/页（CPU）。
-
-上传前建议先跑预检，它只在本机解析、不调用模型：
-
-```powershell
-.venv\Scripts\python.exe scripts\preflight.py "D:\材料\*.pdf"
-```
-
-生成一份扫描件样例（把 docx 光栅化成无文字层的 PDF）用于自测：
-
-```powershell
-.venv\Scripts\python.exe scripts\make_scan_sample.py
-```
-
-## 3.1 内网试用（推荐）
-
-```powershell
-# 1) 生成 .env（随机 SECRET，不生成管理员密码）
-start.cmd -Init
-
-# 2) 把 DEEPSEEK_API_KEY 填进 .env
-# 3) 已有数据库的话，重设管理员密码（对已存在账号，.env 里的 ADMIN_PASSWORD 不生效）
-.venv\Scripts\python.exe scripts\set_admin.py admin '你的新密码'
-
-# 4) 启动，绑定 0.0.0.0 并打印内网地址
-start.cmd
-```
-
-启动日志里以 `!` 开头的三行是安全自检，出现任何一行都要处理：
-
-| 提示 | 含义 |
+| 能力 | 说明 |
 |---|---|
-| `DILIGENCE_SECRET 仍是默认值` | 会话可被伪造，删掉 `.env` 重跑 `-Init` |
-| `管理员 … 仍在使用默认密码 123456` | 任何人都能进后台，跑 `scripts/set_admin.py` |
-| `启动恢复：N 个项目停在「执行中」` | 上次进程被杀，已标记失败并退还积分 |
+| **三维度核查** | 资产权属、劳动用工、投资退出与股权回购，一次跑完三个维度；某维度材料不全只跳过该维度 |
+| **实时进度** | 每步落一条记录，页面按「当前维度 + 正在做的事」逐步显示，可回看历史项目的完整流程 |
+| **证据锚点** | 每条结论必须定位到《文件》第 N 页「原文片段」，定位不到的判为未验证 |
+| **本地 OCR** | 扫描件 PDF 与图片走本地引擎（rapidocr），不联网、不外发 |
+| **上市规则索引** | 内置港交所《主板上市规则》+《GEM 规则》**3,137 条**条文（主板 1,641 / GEM 1,496，54 个章节），结论可按条号取原文与页码 |
+| **律师复核闸门** | 命中「缺法律依据 / 高风险结论 / 材料矛盾」等条件即转 `pending_review`，不直接出结论 |
+| **docx 报告** | 逐项事实、证据、整改建议，文末附所引条文原文 |
 
-首次在内网访问前，Windows 防火墙需要放行端口（管理员 PowerShell）：
+## 它不是什么
 
-```powershell
-New-NetFirewallRule -DisplayName "LawLens 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
+- **不是法律意见**。所有结论须经律师复核后方可使用。
+- **不是全自动**。抽取走模型，**判读层目前仍是规则**（见「已知限制」）。
+- **不是多租户 SaaS**。一个实例服务一个人/一个团队，数据不隔离。
+
+---
+
+## 快速开始
+
+### 方式一：桌面版（免安装）
+
+下载 Release 里的 `lawlens-desktop-*.zip` → 解压 → 双击 `START.bat` → 浏览器自动打开 `http://127.0.0.1:8000`。
+包内自带 Python 与依赖，对方电脑无需安装任何东西。
+
+### 方式二：源码运行
+
+需要 Python 3.11+；构建前端需要 Node 20 + pnpm。
+
+```bash
+python -m venv .venv
+.venv/Scripts/pip install -r backend/requirements.txt      # Windows
+# source .venv/bin/activate && pip install -r backend/requirements.txt   # macOS/Linux
+
+cd frontend && pnpm install && pnpm build && cd ..
+
+cp .env.example .env        # 填入 DEEPSEEK_API_KEY；留空则跑演示模式
+python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
 ```
 
-## 4. 管理员账号
+首次启动会在日志里打印随机管理员密码（只显示一次）。数据库、上传件、报告都在 `backend/data/`。
 
-- 全新数据库首次启动时：若 `.env` 未设 `DILIGENCE_ADMIN_PASSWORD`，会**随机生成**并打印一次（`!` 开头），登录后请立即修改。
-- 已有数据库：用 `scripts/set_admin.py` 重设，`.env` 里的密码不会覆盖已存在账号。
-- 普通用户自行注册，注册即得 `DILIGENCE_REGISTER_BONUS` 积分（默认 100）。
+> Windows 用户也可以直接双击 `start.cmd`（自动读 `.env`、绑定 0.0.0.0、打印内网地址）。
 
-## 5. 一次核查的完整链路
+### 方式三：Docker
 
-```
-登录 → 建项目（填主体全称）→ 上传材料 → 发起核查（-10 积分）
-   → A 意图识别：自然语言 → 任务单（核查项 + 所需材料）
-   → 缺料检查：缺什么直接返回，不消耗模型调用
-   → B 资料抽取：字段 + 页码 + 原文片段，同字段多值记为冲突
-   → C 分析：按核查要点判定风险等级、给出整改建议
-   → D 质检：逐条回原文校验证据是否能定位；不能定位的判为不合格
-   → 报告：docx，每条结论附《文件》第 N 页「原文」
+```bash
+cd deploy
+cp ../.env .env
+docker compose up -d --build
 ```
 
-## 5.1 核查范围：固定三个维度
+数据挂载在 `deploy/data/`。反向代理与 HTTPS 见 `deploy/nginx.conf`。
 
-每次核查都覆盖下面三个维度，**不提供"选一个知识库"的选项**：先跑资产，再跑劳动，最后跑股权退出，单个维度材料不全只跳过该维度，三个都缺才转「待补材料」。
+---
 
-| 维度 | 核查要点 | 样本目录 |
+## 一次核查是怎么跑的
+
+```
+上传材料
+  └─ 解析：PDF 抽文字层 → 抽不到才 OCR；保留 [[PAGE n]] 页码锚点
+      └─ 逐维度循环（资产 → 劳动 → 股权）
+          ├─ A 意图识别：生成该维度的核查要点
+          ├─ 缺料检查：材料不全 → 跳过该维度并记录缺口
+          ├─ B 资料抽取：模型逐份抽取字段，强制使用约定字段名，附原文与页码
+          ├─ C 风险分析：按规则判读风险等级
+          └─ D 质检：逐条回原文核对锚点，定位不到判为不合格
+      └─ 港股专项材料检查（审计报告、发行方案、股权结构…）
+      └─ 生成 docx 报告 + 触发复核闸门
+```
+
+每条步骤都写进 `task_runs` 表，前端轮询 `/api/projects/{id}/progress` 渲染进度。
+
+## 目录结构
+
+```
+backend/            FastAPI 后端
+  app/main.py       路由：认证 / 项目 / 上传 / 流水线 / 报告 / 管理
+  app/agents.py     抽取与分析；in-field 词表与规则判读
+  app/parsers.py    PDF / DOCX / TXT / 图片解析，含本地 OCR
+  app/rule_refs.py  上市规则内置索引：按条号取原文、主题检索、核查项绑定
+  app/rules_data/   listing_rules.json（3,137 条，随包发布）
+  app/rules/*.json  三维度核查要点库（办案经验；规范依据部分待补）
+  app/report.py     docx 报告生成
+frontend/           React + Vite（构建产物由后端托管）
+samples/            虚构材料与脱敏样例（含 12 条埋点，可验证检出率）
+deploy/             Dockerfile / compose / nginx / systemd / 备份 / 临时公网发布
+scripts/            预检、样例生成、模型连通性自检、无头浏览器 UI 校验
+```
+
+## 规则依据的现状
+
+已核到原文与页码的条款：
+
+| 条款 | 内容 | 出处 |
 |---|---|---|
-| 资产权属与经营基础 | AST-01 权属主体、AST-02 权证完整、AST-03 权利负担、AST-04 租赁合法、AST-05 资质有效、AST-06 知识产权 | `samples/虚构测试样本/` |
-| 劳动用工合规 | LAB-01 合同签订、LAB-02 社保、LAB-03 派遣、LAB-04 工时、LAB-05 竞业、LAB-06 争议 | `samples/虚构测试样本-劳动用工/` |
-| 投资退出与股权回购 | EQT-01 出资、EQT-02 代持、EQT-03 对赌回购、EQT-04 优先权、EQT-05 变动程序、EQT-06 特殊权利 | `samples/虚构测试样本-投资退出/` |
+| 8.04 | 發行人及其業務必須屬於本交易所認為適合上市者 | 主板规则综合版 p149 |
+| 8.05 | 盈利测试 / 市值-收益-现金流测试 / 市值-收益测试 | 同上 p149 |
+| 8.08 | 公開市場規定（公众持股比例） | 同上 p153 |
+| 14A.01 | 关连交易章适用范围 | 同上 p378 |
 
-进度在点「开始核查」后就地显示：三个维度标签 + 当前步骤 + 步骤日志，数据来自 `GET /api/projects/{id}/progress`。
+其余核查项在报告里标为「规范依据待补」，并**主动触发复核闸门**——这是刻意的：没有条文的结论必须由律师确认。
 
-## 5.2 设置（/app/settings）
+## 已知限制
 
-- **配色**：藏青 / 墨 / 苔，只影响本机显示，存 `localStorage`。
-- **修改密码**：校验原密码后更新，操作写入审计日志。
-- **模型接入**：API Key、模型名、接口地址。**密钥只存在本浏览器**，发起核查时通过请求头 `X-LLM-Key` 传给后端，不写入数据库、不落日志；可点"测试连接"验证。
+1. **判读层是规则，不是模型**。模型只负责抽取；风险等级由 `agents.py` 中的规则计算。规则依赖字段名，抽取跑偏会漏判。
+2. **条文索引靠版面识别**，未与官方网页逐条比对；附录表格可能串号，引用前须回 PDF 页面核对。
+3. **单租户**。多客户共用一台会串数据。
+4. **无 CSRF 防护**，会话 cookie 默认非 Secure（公网须设 `DILIGENCE_COOKIE_SECURE=1`）。
+5. **不做 OCR 以外的版面理解**：表格结构、手写批注、盖章覆盖处识别率有限。
+6. **报告不构成法律意见**，也不承诺「符合上市规则」。
 
-## 6. 已验证
+## 数据与隐私
 
-**后端端到端**（`python scripts/smoke_test.py`，47 项全过）
-- 注册/登录、积分赠送与扣减、失败退还
-- 未登录 401、普通用户访问后台 403、积分不足 402 且不改变项目状态
-- 7 份材料上传与解析
-- 四个 Agent 串联，识别出 6 条风险：权属主体不一致、抵押、质押、租赁出租方非产权人、资质过期、材料冲突
-- 每条结论均带证据锚点，质检全部通过
-- docx 报告生成与下载（约 40KB）
-- 复核闸门：命中条件后进入待律师复核，管理员复核通过才转「已出报告」
-- 量化评分：单项目五维评分 + 主体总表（三板块聚合，缺板块记 N/A）
-- 管理后台：概览、用户积分、规则库、审计日志
+- 数据库、上传件、报告全部落在本机 `backend/data/`，删目录即清空。
+- OCR 完全本地，不联网。
+- **抽取时材料正文会发送给模型服务商**（默认 DeepSeek）。涉密材料请先脱敏，或使用本地兼容端点。
+- 仓库内所有样例均为虚构，不对应任何真实企业、个人或不动产。
 
-> 冒烟测试会清空其数据目录。演示库正在运行时，用独立目录跑：
-> `$env:DILIGENCE_DATA_DIR="...\backend\data-smoke"` 后再执行，避免清掉正在演示的数据。
+## 自检
 
-**真实 HTTP 链路**（运行中的服务，curl）
-- 注册 → 建项目 → 7 次上传 → 发起任务 → 6 条结论 → 报告 40KB → 静态资源 200
+```bash
+# 材料预检（本地解析 + 缺料判断，不调用模型）
+python scripts/preflight.py "samples/脱敏样例-澄海精工-2026-10/*.pdf"
 
-**浏览器 UI**（`node scripts/ui_check.mjs`，Chrome headless，37 项全过，自动造数据）
-- 首页：LawLens、一句话、内嵌登录表单；不含旧名、板块与流程
-- 在首页表单直接输入账号密码登录 → 直接进入工作台（不经过登录页）
-- 在对话框写一句话点"开始核查" → 直接创建项目并进入项目页
-- 八枚透镜在全视口范围内游走并相互碰撞反弹（活动范围为整个网页，不限于文字场）；镜内放大 1.12–1.24 倍；底部风险文字 24 条
-- 已登录时首页显示"进入工作台"与"退出登录"，未登录时显示内嵌登录表单
-- 工作台：5 步工作流预览、对话框（问题/知识库/主体/附件）、最近项目列表
-- 项目详情 6 条结论、7 条证据引用、质检结论、上传控件不裸露
-- 管理后台四个标签页与要点库"待补"标注
-- 截图见 `ui-shots/`
+# 模型连通性与 JSON 回环
+python scripts/check_llm.py
 
+# 生成一套带 12 个埋点的脱敏材料
+python scripts/make_masked_samples.py
+```
 
-> 说明：以上验证的是"系统能按要求工作"，不代表核查结论在法律上正确——后者需律师判断。
+## 许可与免责
 
-
-## 7. 已知限制（刻意保留，不隐藏）
-
-1. **规则库无规范依据**：核查要点来自办案经验，`rule_ref` 为空即显示"待补"，不得据以作出法律结论。
-2. **样本为虚构**：仅验证系统机制，不代表真实企业情况。
-3. **演示模式为规则启发式**：未接模型时，抽取靠正则，能力有限；配置 `DEEPSEEK_API_KEY` 后切换为模型抽取。
-4. **未做**：支付、实名认证、多租户隔离、OCR、高并发与灾备。
-5. **质检的边界**：能校验"证据原文是否存在"，不能校验"法律判断是否正确"——后者仍是律师的工作。
+本仓库为内部研发版本，未附开源许可证。使用前请自行评估合规性。
+任何输出均为机器辅助整理结果，**不构成法律意见、审计意见或投资建议**。
