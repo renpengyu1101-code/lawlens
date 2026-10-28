@@ -35,6 +35,12 @@ Write-Host "Python $ver → $py"
 if ([version]$ver -lt [version]'3.11') {
   Write-Host "Python 版本过低，建议 3.11 / 3.12" -ForegroundColor Yellow
 }
+# OCR 引擎（rapidocr-onnxruntime）只支持 Python < 3.13，高版本自动改用精简依赖
+if ([version]$ver -ge [version]'3.13') {
+  Write-Host "Python $ver 超出 OCR 引擎支持范围（需 < 3.13），自动改用精简依赖：扫描件将无法识别，其余功能正常。" -ForegroundColor Yellow
+  Write-Host "如需 OCR，请安装 Python 3.11/3.12 后删除 .venv 重跑本脚本。" -ForegroundColor Yellow
+  $Lite = $true
+}
 
 # 2) 建虚拟环境
 if (-not (Test-Path (Join-Path $root '.venv\Scripts\python.exe'))) {
@@ -54,15 +60,31 @@ if ($Lite) {
 }
 
 Write-Host "安装依赖（首次约 3–10 分钟）..."
+$pipLog = Join-Path $env:TEMP ("lawlens-pip-{0}.log" -f (Get-Date -Format 'HHmmss'))
+& $venvPy -m pip install --upgrade pip --quiet
 if (Test-Path $wheels) {
-  & $venvPy -m pip install --upgrade pip --quiet
-  & $venvPy -m pip install --no-index --find-links $wheels -r $req
+  $pipOut = & $venvPy -m pip install --no-index --find-links $wheels -r $req 2>&1
 } else {
-  & $venvPy -m pip install --upgrade pip --quiet
-  & $venvPy -m pip install -r $req
+  $pipOut = & $venvPy -m pip install -r $req 2>&1
 }
+$pipOut | Out-String | Set-Content -Path $pipLog -Encoding utf8
 if ($LASTEXITCODE -ne 0) {
-  Write-Host "依赖安装失败。若是网络问题，可让提供方附带 wheels 目录后重试。" -ForegroundColor Red
+  Write-Host "依赖安装失败。pip 输出最后几行：" -ForegroundColor Red
+  $pipOut | Select-Object -Last 8 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+  $text = ($pipOut | Out-String)
+  if ($text -match 'ProxyError|Cannot connect to proxy|Connection aborted|NewConnectionError|Read timed out') {
+    Write-Host ""
+    Write-Host "判断：网络或代理问题。" -ForegroundColor Yellow
+    Write-Host "本机若开着代理（Clash / 公司代理），pip 会走系统代理而失败。可临时设置后重试：" -ForegroundColor Yellow
+    Write-Host '  $env:NO_PROXY="pypi.org,files.pythonhosted.org"; $env:no_proxy=$env:NO_PROXY' -ForegroundColor Yellow
+    Write-Host '  然后重新运行 install.ps1' -ForegroundColor Yellow
+  } elseif ($text -match 'Ignored the following versions that require a different python version|No matching distribution|Requires-Python') {
+    Write-Host ""
+    Write-Host "判断：Python 版本不兼容（某些依赖不支持当前解释器）。" -ForegroundColor Yellow
+    Write-Host "处理：安装 Python 3.11/3.12 后删除 .venv 重跑；或直接运行 install.ps1 -Lite" -ForegroundColor Yellow
+  }
+  Write-Host ""
+  Write-Host "完整日志：$pipLog" -ForegroundColor Yellow
   exit 1
 }
 
