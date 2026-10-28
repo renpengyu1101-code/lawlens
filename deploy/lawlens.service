@@ -1,0 +1,34 @@
+[Unit]
+Description=LawLens 港股上市评估（内网试用）
+After=network.target
+
+[Service]
+Type=simple
+User=lawlens
+Group=lawlens
+WorkingDirectory=/opt/lawlens
+
+# 环境变量来自 .env；ExecStart 用 sh -c 是为了让它读到 .env
+EnvironmentFile=/opt/lawlens/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+
+ExecStart=/opt/lawlens/.venv/bin/python -m uvicorn app.main:app \
+  --app-dir /opt/lawlens/backend --host 0.0.0.0 --port 8000
+
+Restart=always
+RestartSec=3
+
+# 基础加固：只允许写数据目录与 /tmp
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/lawlens/backend/data
+
+# 日志进 journald：journalctl -u lawlens -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

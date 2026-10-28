@@ -1,0 +1,22 @@
+﻿# 运行环境与依赖
+.venv/
+__pycache__/
+*.pyc
+frontend/node_modules/
+
+# 构建产物
+frontend/dist/
+dist-packages/
+deploy/build/
+deploy/bin/
+
+# 数据与密钥（绝不入库）
+backend/data/
+.env
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "total": 100,
+  "note": "维度权重由用户指定（20/20/25/20/10）。条目分值、扣分系数为初始标定，依据现有规则库与办案经验；尚无结果数据校准，属可调整参数，不构成法律意见。",
+  "dimensions": [
+    {
+      "id": "A",
+      "name": "资产、财务及经营基础",
+      "points": 20,
+      "boards": ["asset"],
+      "items": [
+        { "id": "A1", "name": "核心资产权属清晰", "points": 6, "source": "findings", "codes": ["AST-01"],
+          "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 }, "basis": "规则库 AST-01" },
+        { "id": "A2", "name": "权证与经营场所完整", "points": 4, "source": "findings", "codes": ["AST-02", "AST-04"],
+          "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 }, "basis": "规则库 AST-02 / AST-04" },
+        { "id": "A3", "name": "权利负担可控", "points": 4, "source": "findings", "codes": ["AST-03"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 AST-03" },
+        { "id": "A4", "name": "经营资质有效", "points": 3, "source": "findings", "codes": ["AST-05"],
+          "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 }, "basis": "规则库 AST-05" },
+        { "id": "A5", "name": "知识产权权属与负担", "points": 3, "source": "findings", "codes": ["AST-06"],
+          "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 }, "basis": "规则库 AST-06" }
+      ]
+    },
+    {
+      "id": "B",
+      "name": "劳动用工",
+      "points": 20,
+      "boards": ["labor"],
+      "items": [
+        { "id": "B1", "name": "书面劳动合同覆盖", "points": 5, "source": "findings", "codes": ["LAB-01"],
+          "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 }, "basis": "规则库 LAB-01" },
+        { "id": "B2", "name": "社保与公积金足额", "points": 5, "source": "findings", "codes": ["LAB-02"],
+          "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 }, "basis": "规则库 LAB-02" },
+        { "id": "B3", "name": "劳务派遣合规", "points": 3, "source": "findings", "codes": ["LAB-03"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 LAB-03" },
+        { "id": "B4", "name": "工时与加班", "points": 3, "source": "findings", "codes": ["LAB-04"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 LAB-04" },
+        { "id": "B5", "name": "竞业限制与保密", "points": 2, "source": "findings", "codes": ["LAB-05"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 LAB-05" },
+        { "id": "B6", "name": "历史劳动争议", "points": 2, "source": "findings", "codes": ["LAB-06"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 LAB-06" }
+      ]
+    },
+    {
+      "id": "C",
+      "name": "投资退出及股权回购",
+      "points": 25,
+      "boards": ["equity"],
+      "items": [
+        { "id": "C1", "name": "出资实缴到位", "points": 6, "source": "findings", "codes": ["EQT-01"],
+          "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 }, "basis": "规则库 EQT-01" },
+        { "id": "C2", "name": "股权权属清晰（无代持）", "points": 6, "source": "findings", "codes": ["EQT-02"],
+          "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 }, "basis": "规则库 EQT-02" },
+        { "id": "C3", "name": "对赌与回购已清理", "points": 7, "source": "findings", "codes": ["EQT-03"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 EQT-03" },
+        { "id": "C4", "name": "优先权与反稀释可控", "points": 3, "source": "findings", "codes": ["EQT-04"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 EQT-04" },
+        { "id": "C5", "name": "股权变动程序完备", "points": 2, "source": "findings", "codes": ["EQT-05"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 EQT-05" },
+        { "id": "C6", "name": "特殊权利已终止", "points": 1, "source": "findings", "codes": ["EQT-06"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 }, "basis": "规则库 EQT-06" }
+      ]
+    },
+    {
+      "id": "D",
+      "name": "基础合规与公司治理",
+      "points": 20,
+      "boards": ["asset", "labor", "equity"],
+      "items": [
+        { "id": "D1", "name": "主体资格与登记状态", "points": 5, "source": "external", "codes": ["EXT-01"],
+          "deduct": { "high": 1.0, "medium": 0.6, "low": 0.3 },
+          "basis": "企查查工商登记状态；未做联网核查时不计分（N/A）" },
+        { "id": "D2", "name": "股权结构自洽", "points": 4, "source": "findings", "codes": ["AST-06", "EQT-05"],
+          "deduct": { "high": 0.8, "medium": 0.5, "low": 0.2 },
+          "basis": "材料间权利人/持股比例冲突" },
+        { "id": "D3", "name": "治理文件齐备", "points": 4, "source": "materials", "required": ["公司章程", "股东协议"],
+          "basis": "是否提供章程与股东协议；只评完整性，不评条款优劣" },
+        { "id": "D4", "name": "无重大合规负面线索", "points": 4, "source": "external", "codes": ["EXT-10"],
+          "deduct": { "high": 1.0, "medium": 0.5, "low": 0.2 },
+          "basis": "搜索到的处罚/立案/失信等线索，未核实，仅作扣分提示" },
+        { "id": "D5", "name": "关联交易披露", "points": 3, "source": "materials", "required": ["关联交易说明"],
+          "basis": "是否提供关联交易说明；未提供按未覆盖处理" }
+      ]
+    },
+    {
+      "id": "E",
+      "name": "核查资料与披露准备",
+      "points": 10,
+      "boards": ["asset", "labor", "equity"],
+      "items": [
+        { "id": "E1", "name": "材料齐全度", "points": 4, "source": "materials_all", "basis": "缺料数 / 应备材料数" },
+        { "id": "E2", "name": "版本一致性", "points": 2, "source": "versions", "basis": "多版本或材料冲突扣分" },
+        { "id": "E3", "name": "证据锚点覆盖率", "points": 2, "source": "coverage", "basis": "有原文锚点的结论占比" },
+        { "id": "E4", "name": "质检通过率", "points": 2, "source": "qc", "basis": "阻断项与材料缺失按比例扣分" }
+      ]
+    }
+  ]
+}

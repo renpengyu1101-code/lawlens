@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "note": "核查要点来自团队办案经验（属自有方法论，无需外部引用）；规范依据一栏为空表示尚未核实到条文原件，界面显示『待补』，不得据以作出法律结论。",
+  "board": "equity",
+  "checkpoints": [
+    {
+      "id": "EQT-01",
+      "topic": "出资到位",
+      "check_point": "注册资本是否实缴到位；认缴与实缴差额、出资方式与非货币出资的评估作价是否合规。",
+      "material_types": ["公司章程", "出资凭证"],
+      "severity_hint": "high",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "EQT-02",
+      "topic": "股权代持与权属",
+      "check_point": "是否存在代持、信托持股、一致行动安排未还原；名义股东与实际出资人是否一致。",
+      "material_types": ["股权结构文件", "代持协议"],
+      "severity_hint": "high",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "EQT-03",
+      "topic": "对赌与回购",
+      "check_point": "投资协议中的业绩承诺、回购、估值调整条款是否在申报前终止或清理；回购义务是否构成上市障碍。",
+      "material_types": ["增资协议", "股东协议"],
+      "severity_hint": "high",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "EQT-04",
+      "topic": "优先权与反稀释",
+      "check_point": "优先认购、优先购买、清算优先、反稀释等特殊权利是否终止；是否影响控制权稳定。",
+      "material_types": ["股东协议", "章程修正案"],
+      "severity_hint": "medium",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "EQT-05",
+      "topic": "股权变动程序",
+      "check_point": "历次增资、转让是否履行股东会决议、放弃优先购买权、工商变更登记等程序。",
+      "material_types": ["股东会决议", "工商变更记录"],
+      "severity_hint": "medium",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "EQT-06",
+      "topic": "特殊权利清理",
+      "check_point": "一票否决、董事提名、信息权等特殊权利是否在申报前终止；终止是否附条件、可否恢复。",
+      "material_types": ["投资协议", "终止协议"],
+      "severity_hint": "medium",
+      "rule_ref": null,
+      "verification_status": "practice"
+    }
+  ]
+}

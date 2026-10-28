@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "note": "核查要点来自团队办案经验（属自有方法论，无需外部引用）；规范依据一栏为空表示尚未核实到条文原件，界面显示『待补』，不得据以作出法律结论。",
+  "board": "labor",
+  "checkpoints": [
+    {
+      "id": "LAB-01",
+      "topic": "劳动合同签订",
+      "check_point": "在职员工是否全部签订书面劳动合同；未签订或签订率不足的，存在二倍工资与无固定期限合同风险。",
+      "material_types": ["劳动合同", "员工名册"],
+      "severity_hint": "high",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "LAB-02",
+      "topic": "社保与公积金",
+      "check_point": "社保、公积金缴纳人数与在职人数是否一致；是否存在未缴、断缴、按最低基数缴纳。",
+      "material_types": ["社保缴纳明细", "公积金缴纳明细"],
+      "severity_hint": "high",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "LAB-03",
+      "topic": "劳务派遣",
+      "check_point": "劳务派遣用工的岗位、人数与比例是否合规；派遣单位资质与被派遣人员权益是否落实。",
+      "material_types": ["劳务派遣协议"],
+      "severity_hint": "high",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "LAB-04",
+      "topic": "工时与加班",
+      "check_point": "是否存在超时加班、未支付加班费、综合工时或不定时工时未审批的情形。",
+      "material_types": ["考勤记录", "工时审批文件"],
+      "severity_hint": "medium",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "LAB-05",
+      "topic": "竞业限制与保密",
+      "check_point": "竞业限制人员范围是否适当、是否约定补偿；保密与职务成果归属是否明确。",
+      "material_types": ["竞业限制协议", "保密协议"],
+      "severity_hint": "medium",
+      "rule_ref": null,
+      "verification_status": "practice"
+    },
+    {
+      "id": "LAB-06",
+      "topic": "劳动争议",
+      "check_point": "历史仲裁、诉讼、群体性事件及行政处罚情况；是否已妥善处理并披露。",
+      "material_types": ["劳动争议文书", "行政处罚决定"],
+      "severity_hint": "medium",
+      "rule_ref": null,
+      "verification_status": "practice"
+    }
+  ]
+}

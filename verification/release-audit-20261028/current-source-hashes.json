@@ -1,0 +1,63 @@
+[
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\scoring.py",
+    "Hash": "9A64C59EE517C51A9239DD5429EB391927D4C5A4B0073AEC7B251BE691EC54A9",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\subject.py",
+    "Hash": "8878F89D1B29135FF74552B0B4B24433AF24A64AEA636EBE8A0C81D9F5026DE3",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\agents.py",
+    "Hash": "019F226ADD8A70208A95F3E00056C9E0FB965A78A27D95A64408C4EC4C046916",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\main.py",
+    "Hash": "A8D95CA412EAC02471CC701E7DF2CBBD4BE912B070E93C7EBABEB2D80444E612",
+    "MatchesAudit": false
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\parsers.py",
+    "Hash": "A75DA16CF536EA3D99FA3E350B5253CFCD3C19D92C5638EE8DF32660318DF27C",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\security.py",
+    "Hash": "60FF478624A23121C6779BB62D6E52997262C18437DB9D02C7D8D859ED3C6351",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\llm.py",
+    "Hash": "E36648C3B99A7BAA47DBAEDF9D8CD92A8E04DFAF8BC4A5B548DF50333AFCF5CE",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\rule_refs.py",
+    "Hash": "7C0813FBC96AF935FB999D99A89839951B5407007BAE9B3D7145448CC788FE1E",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\report.py",
+    "Hash": "06D848DC03892E21182013CD52631E69091961DA2C08EDFCDE36576936A3000C",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\rules\\scoring.json",
+    "Hash": "B3C4A48F668CAB1645FAEE5A6B5D047FA2ECD3DBEA4E6BD596FD719AB5C4F9D2",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\frontend\\src\\pages\\Dashboard.jsx",
+    "Hash": "F1EEA4BF18624D63BAC6D063AA9F803E8AC45A5F398B93FC20BB899D259CD2CC",
+    "MatchesAudit": true
+  },
+  {
+    "Path": "D:\\Users\\92182\\Documents\\deepseek-harness\\default-workspace\\diligence-platform\\backend\\app\\config.py",
+    "Hash": "EEA1F1D0639F17C8316D15A12979AE6BC4BB1D1E02AA988893B4F06E6B05A171",
+    "MatchesAudit": null,
+    "Note": "Additional file inspected during independent review; no prior hash"
+  }
+]

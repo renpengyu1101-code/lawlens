@@ -1,0 +1,22 @@
+services:
+  lawlens:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: lawlens:latest
+    container_name: lawlens
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # 容器内数据目录（与 Dockerfile 的 VOLUME 对应）
+      DILIGENCE_DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

@@ -1,0 +1,90 @@
+{
+  "fixture_notice": "All identities, files, inputs and states are synthetic test fixtures, not real business facts.",
+  "results": {
+    "rubric_sum": {
+      "declared_total": 100,
+      "sum_dimensions": 95
+    },
+    "missing_boards_score": {
+      "A": {
+        "earned": 20.0,
+        "applicable": 20.0
+      },
+      "B": {
+        "earned": 20.0,
+        "applicable": 20.0
+      },
+      "C": {
+        "earned": 25.0,
+        "applicable": 25.0
+      },
+      "D": {
+        "earned": 4.0,
+        "applicable": 4.0
+      },
+      "E": {
+        "earned": 0.0,
+        "applicable": 0.0
+      }
+    },
+    "search_only_external_score": {
+      "id": "D1",
+      "name": "主体资格与登记状态",
+      "points": 5.0,
+      "earned": 5.0,
+      "applicable": true,
+      "status": "full",
+      "reasons": []
+    },
+    "wrong_page_qc": {
+      "passed": true,
+      "checked": 1,
+      "failed": 0,
+      "issues": [],
+      "notices": [],
+      "note": "规范依据待补"
+    },
+    "normal_different_lessor": [
+      "经营场所出租方非产权人"
+    ],
+    "empty_body_filename_materials": [],
+    "blank_pdf": {
+      "pages": 10,
+      "status": "parsed",
+      "non_marker_text": ""
+    },
+    "docx_pages": {
+      "explicit_page_breaks": 1,
+      "parser_pages": 1
+    },
+    "long_document_truncation": {
+      "tail_present": false
+    },
+    "all_project_subject": {
+      "A": 0.0,
+      "B": 0.0,
+      "C": 0.0,
+      "D": 4.0,
+      "E": 0.0
+    },
+    "upload_after_done": {
+      "before": "done",
+      "upload_status": 200,
+      "after": "done"
+    },
+    "version_while_running": {
+      "http_status": 200
+    },
+    "approve_blocker_without_resolution": {
+      "http_status": 200,
+      "result": {
+        "ok": true,
+        "status": "approved",
+        "project_status": "done"
+      }
+    },
+    "old_session_after_password_change": {
+      "http_status": 200
+    }
+  }
+}
